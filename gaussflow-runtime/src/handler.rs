@@ -1,29 +1,44 @@
 use async_trait::async_trait;
-use gaussflow_core::model::{NodeType, NodeSpec, NodeConfig};
-use serde_json::{json, Value};
+use gaussflow_core::model::{NodeConfig, NodeSpec, NodeType};
 use reqwest::Client;
+use serde_json::{json, Value};
 
 #[async_trait]
 pub trait NodeHandler: Send + Sync {
-    async fn execute(&self, node: &NodeSpec, _input: Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>>;
+    async fn execute(
+        &self,
+        node: &NodeSpec,
+        _input: Value,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 #[derive(Debug)]
 pub struct LlmCallHandler;
 #[async_trait]
 impl NodeHandler for LlmCallHandler {
-    async fn execute(&self, node: &NodeSpec, _input: Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    async fn execute(
+        &self,
+        node: &NodeSpec,
+        _input: Value,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         // Get model from config or use default
         let model = match &node.config {
             NodeConfig::LlmCall { model, .. } => model.as_str(),
-            NodeConfig::Generic(map) => map.get("model").and_then(|m| m.as_str()).unwrap_or("gpt-3.5-turbo"),
+            NodeConfig::Generic(map) => map
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or("gpt-3.5-turbo"),
             _ => "gpt-3.5-turbo",
         };
 
         // Get temperature from config or params
         let temperature = match &node.config {
             NodeConfig::LlmCall { temperature, .. } => *temperature,
-            _ => node.params.get("temperature").and_then(|t| t.as_f64()).map(|t| t as f32),
+            _ => node
+                .params
+                .get("temperature")
+                .and_then(|t| t.as_f64())
+                .map(|t| t as f32),
         };
 
         // Build request body
@@ -57,7 +72,7 @@ impl NodeHandler for LlmCallHandler {
 
         let answer = resp["choices"][0]["message"]["content"]
             .as_str()
-            .ok_or_else(|| "Invalid response format from OpenAI API")?;
+            .ok_or("Invalid response format from OpenAI API")?;
 
         Ok(json!({
             "llm_call": node.id,
@@ -71,7 +86,11 @@ impl NodeHandler for LlmCallHandler {
 pub struct AgentHandler;
 #[async_trait]
 impl NodeHandler for AgentHandler {
-    async fn execute(&self, node: &NodeSpec, _input: Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    async fn execute(
+        &self,
+        node: &NodeSpec,
+        _input: Value,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         Ok(json!({
             "agent": node.id,
             "state": _input
@@ -83,7 +102,11 @@ impl NodeHandler for AgentHandler {
 pub struct EnsembleHandler;
 #[async_trait]
 impl NodeHandler for EnsembleHandler {
-    async fn execute(&self, node: &NodeSpec, _input: Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    async fn execute(
+        &self,
+        node: &NodeSpec,
+        _input: Value,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         let out = json!({
             "ensemble": node.id,
             "children": _input
@@ -96,7 +119,11 @@ impl NodeHandler for EnsembleHandler {
 pub struct RouterHandler;
 #[async_trait]
 impl NodeHandler for RouterHandler {
-    async fn execute(&self, node: &NodeSpec, _input: Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    async fn execute(
+        &self,
+        node: &NodeSpec,
+        _input: Value,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         Ok(json!({
             "router": node.id,
             "routed": _input
@@ -110,7 +137,11 @@ pub struct DataProcessorHandler;
 
 #[async_trait]
 impl NodeHandler for DataProcessorHandler {
-    async fn execute(&self, node: &NodeSpec, _input: Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    async fn execute(
+        &self,
+        node: &NodeSpec,
+        _input: Value,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         Ok(json!({
             "data_processor": node.id,
             "input": _input
@@ -124,7 +155,11 @@ pub struct ConditionalHandler;
 
 #[async_trait]
 impl NodeHandler for ConditionalHandler {
-    async fn execute(&self, node: &NodeSpec, _input: Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    async fn execute(
+        &self,
+        node: &NodeSpec,
+        _input: Value,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         Ok(json!({
             "conditional": node.id,
             "input": _input
@@ -138,7 +173,11 @@ pub struct ParallelHandler;
 
 #[async_trait]
 impl NodeHandler for ParallelHandler {
-    async fn execute(&self, node: &NodeSpec, _input: Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    async fn execute(
+        &self,
+        node: &NodeSpec,
+        _input: Value,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         Ok(json!({
             "parallel": node.id,
             "input": _input
@@ -155,6 +194,6 @@ pub fn handler_for(kind: &NodeType) -> Box<dyn NodeHandler> {
         NodeType::Subgraph => Box::new(AgentHandler),
         NodeType::DataProcessor => Box::new(DataProcessorHandler),
         NodeType::Conditional => Box::new(ConditionalHandler),
-        NodeType::Parallel => Box::new(ParallelHandler)
+        NodeType::Parallel => Box::new(ParallelHandler),
     }
 }

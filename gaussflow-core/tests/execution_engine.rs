@@ -55,8 +55,16 @@ async fn test_linear_workflow_execution() {
             ("node3".to_string(), NodeType::LlmCall),
         ],
         vec![
-            ("node1".to_string(), "node2".to_string(), "success".to_string()),
-            ("node2".to_string(), "node3".to_string(), "success".to_string()),
+            (
+                "node1".to_string(),
+                "node2".to_string(),
+                "success".to_string(),
+            ),
+            (
+                "node2".to_string(),
+                "node3".to_string(),
+                "success".to_string(),
+            ),
         ],
     );
 
@@ -89,10 +97,26 @@ async fn test_parallel_execution() {
             ("node4".to_string(), NodeType::LlmCall),
         ],
         vec![
-            ("node1".to_string(), "node2".to_string(), "success".to_string()),
-            ("node1".to_string(), "node3".to_string(), "success".to_string()),
-            ("node2".to_string(), "node4".to_string(), "success".to_string()),
-            ("node3".to_string(), "node4".to_string(), "success".to_string()),
+            (
+                "node1".to_string(),
+                "node2".to_string(),
+                "success".to_string(),
+            ),
+            (
+                "node1".to_string(),
+                "node3".to_string(),
+                "success".to_string(),
+            ),
+            (
+                "node2".to_string(),
+                "node4".to_string(),
+                "success".to_string(),
+            ),
+            (
+                "node3".to_string(),
+                "node4".to_string(),
+                "success".to_string(),
+            ),
         ],
     );
 
@@ -120,12 +144,7 @@ async fn test_resource_validation() {
 
     // Create a node with resource requirements
     let mut workflow = workflow;
-    if let Some(node) = workflow
-        .graph
-        .node_weights_mut()
-        .next()
-        .map(|n| n.clone())
-    {
+    if let Some(node) = workflow.graph.node_weights_mut().next().map(|n| n.clone()) {
         let mut node = node;
         node.resources = Some(ResourceSpec {
             required_executor: Some("gpu".to_string()),
@@ -165,10 +184,7 @@ async fn test_retry_logic() {
     let result = engine.execute(workflow, json!({})).await;
 
     // Should fail after retries
-    assert!(matches!(
-        result,
-        Err(ExecutionError::NodeExecution(_))
-    ));
+    assert!(matches!(result, Err(ExecutionError::NodeExecution(_))));
 }
 
 #[tokio::test]

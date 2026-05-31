@@ -6,8 +6,8 @@
 
 use crate::DagError;
 use async_trait::async_trait;
-use sha2::{Digest, Sha256};
 use dashmap::DashMap;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 /// A generic trait for a content-addressed store.

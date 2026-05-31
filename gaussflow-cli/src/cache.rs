@@ -4,7 +4,10 @@ use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use lru::LruCache;
 use moka::sync::Cache as MokaCache;
 use parking_lot::RwLock;
-use serde::{de::{DeserializeOwned, MapAccess}, Serialize, Deserialize};
+use serde::{
+    de::{DeserializeOwned, MapAccess},
+    Deserialize, Serialize,
+};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -54,7 +57,13 @@ where
     {
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field { Value, CreatedAt, AccessedAt, AccessCount, Size }
+        enum Field {
+            Value,
+            CreatedAt,
+            AccessedAt,
+            AccessCount,
+            Size,
+        }
 
         struct CacheEntryVisitor<T> {
             _phantom: std::marker::PhantomData<T>,
@@ -118,9 +127,12 @@ where
                 }
 
                 let value = value.ok_or_else(|| serde::de::Error::missing_field("value"))?;
-                let created_at = created_at.ok_or_else(|| serde::de::Error::missing_field("created_at"))?;
-                let accessed_at = accessed_at.ok_or_else(|| serde::de::Error::missing_field("accessed_at"))?;
-                let access_count = access_count.ok_or_else(|| serde::de::Error::missing_field("access_count"))?;
+                let created_at =
+                    created_at.ok_or_else(|| serde::de::Error::missing_field("created_at"))?;
+                let accessed_at =
+                    accessed_at.ok_or_else(|| serde::de::Error::missing_field("accessed_at"))?;
+                let access_count =
+                    access_count.ok_or_else(|| serde::de::Error::missing_field("access_count"))?;
                 let size = size.ok_or_else(|| serde::de::Error::missing_field("size"))?;
 
                 Ok(CacheEntry {
@@ -133,8 +145,14 @@ where
             }
         }
 
-        const FIELDS: &'static [&'static str] = &["value", "created_at", "accessed_at", "access_count", "size"];
-        deserializer.deserialize_struct("CacheEntry", FIELDS, CacheEntryVisitor { _phantom: std::marker::PhantomData })
+        const FIELDS: &[&str] = &["value", "created_at", "accessed_at", "access_count", "size"];
+        deserializer.deserialize_struct(
+            "CacheEntry",
+            FIELDS,
+            CacheEntryVisitor {
+                _phantom: std::marker::PhantomData,
+            },
+        )
     }
 }
 
@@ -152,25 +170,25 @@ pub struct CacheStats {
 pub struct CacheManager {
     /// L1: In-memory LRU cache for hot data
     l1_cache: Arc<RwLock<LruCache<String, CacheEntry<Vec<u8>>>>>,
-    
+
     /// L2: Concurrent cache for frequently accessed data
     l2_cache: Arc<MokaCache<String, CacheEntry<Vec<u8>>>>,
-    
+
     /// L3: Persistent cache for cold data
     l3_cache: Arc<DashMap<String, CacheEntry<Vec<u8>>>>,
-    
+
     /// Configuration
     config: CacheConfig,
-    
+
     /// Statistics
     stats: Arc<RwLock<CacheStats>>,
-    
+
     /// Compression enabled
     compression: bool,
-    
+
     /// Persistence enabled
     persistence: bool,
-    
+
     /// Persistence path
     persistence_path: Option<PathBuf>,
 }
@@ -178,19 +196,19 @@ pub struct CacheManager {
 impl CacheManager {
     /// Create a new cache manager
     pub async fn new(config: &CacheConfig) -> Result<Self> {
-        let l1_cache = Arc::new(RwLock::new(
-            LruCache::new(NonZeroUsize::new(config.max_size / 10).unwrap_or(NonZeroUsize::new(100).unwrap()))
-        ));
-        
+        let l1_cache = Arc::new(RwLock::new(LruCache::new(
+            NonZeroUsize::new(config.max_size / 10).unwrap_or(NonZeroUsize::new(100).unwrap()),
+        )));
+
         let l2_cache = Arc::new(
             MokaCache::builder()
                 .max_capacity(config.max_size as u64)
                 .time_to_live(Duration::from_secs(config.ttl_seconds))
-                .build()
+                .build(),
         );
-        
+
         let l3_cache = Arc::new(DashMap::new());
-        
+
         let mut manager = Self {
             l1_cache,
             l2_cache,
@@ -201,20 +219,20 @@ impl CacheManager {
             persistence: config.persistence,
             persistence_path: config.persistence_path.clone(),
         };
-        
+
         // Load persistent cache if enabled
         if config.persistence {
             if let Err(e) = manager.load_persistent_cache().await {
                 warn!("Failed to load persistent cache: {}", e);
             }
         }
-        
+
         // Start background tasks
         manager.start_background_tasks();
-        
+
         Ok(manager)
     }
-    
+
     /// Get a value from cache
     pub async fn get<T>(&self, key: &str) -> Result<Option<T>>
     where
@@ -226,34 +244,34 @@ impl CacheManager {
             debug!("Cache hit in L1: {}", key);
             return Ok(Some(self.deserialize_value(&entry.value)?));
         }
-        
+
         // Try L2 cache
         if let Some(entry) = self.l2_cache.get(key) {
             self.update_stats(true, entry.size);
             debug!("Cache hit in L2: {}", key);
-            
+
             // Promote to L1
             self.promote_to_l1(key, entry.clone()).await;
-            
+
             return Ok(Some(self.deserialize_value(&entry.value)?));
         }
-        
+
         // Try L3 cache
         if let Some(entry) = self.l3_cache.get(key) {
             self.update_stats(true, entry.size);
             debug!("Cache hit in L3: {}", key);
-            
+
             // Promote to L2
             self.promote_to_l2(key, entry.clone()).await;
-            
+
             return Ok(Some(self.deserialize_value(&entry.value)?));
         }
-        
+
         self.update_stats(false, 0);
         debug!("Cache miss: {}", key);
         Ok(None)
     }
-    
+
     /// Set a value in cache
     pub async fn set<T>(&self, key: &str, value: T, _ttl: Option<Duration>) -> Result<()>
     where
@@ -261,7 +279,7 @@ impl CacheManager {
     {
         let serialized = self.serialize_value(&value)?;
         let size = serialized.len();
-        
+
         let entry = CacheEntry {
             value: serialized,
             created_at: Instant::now(),
@@ -269,16 +287,16 @@ impl CacheManager {
             access_count: 1,
             size,
         };
-        
+
         // Store in all cache layers
         self.set_in_l1(key, entry.clone()).await;
         self.set_in_l2(key, entry.clone()).await;
         self.set_in_l3(key, entry).await;
-        
+
         debug!("Cached value for key: {} (size: {} bytes)", key, size);
         Ok(())
     }
-    
+
     /// Remove a value from cache
     pub async fn remove(&self, key: &str) -> Result<bool> {
         // Remove from all layers. NOTE: use `pop` (not `demote`) — `demote` only moves the LRU
@@ -292,39 +310,40 @@ impl CacheManager {
         let l3_removed = self.l3_cache.remove(key).is_some();
 
         let removed = l1_removed || l2_removed || l3_removed;
-        
+
         if removed {
             debug!("Removed cache entry: {}", key);
         }
-        
+
         Ok(removed)
     }
-    
+
     /// Clear all caches
     pub async fn clear(&self) -> Result<()> {
         self.l1_cache.write().clear();
         self.l2_cache.invalidate_all();
         self.l3_cache.clear();
-        
+
         // Reset statistics
         let mut stats = self.stats.write();
         *stats = CacheStats::default();
-        
+
         info!("All caches cleared");
         Ok(())
     }
-    
+
     /// Get cache statistics
     pub async fn stats(&self) -> CacheStats {
         let stats = self.stats.read();
         let mut result = stats.clone();
-        
+
         // Update current size
-        result.size = self.l1_cache.read().len() + self.l2_cache.entry_count() as usize + self.l3_cache.len();
-        
+        result.size =
+            self.l1_cache.read().len() + self.l2_cache.entry_count() as usize + self.l3_cache.len();
+
         result
     }
-    
+
     /// Get value from L1 cache
     async fn get_from_l1(&self, key: &str) -> Option<CacheEntry<Vec<u8>>> {
         let mut cache = self.l1_cache.write();
@@ -338,38 +357,37 @@ impl CacheManager {
             None
         }
     }
-    
+
     /// Set value in L1 cache
     async fn set_in_l1(&self, key: &str, entry: CacheEntry<Vec<u8>>) {
         let mut cache = self.l1_cache.write();
         cache.put(key.to_string(), entry);
     }
-    
+
     /// Set value in L2 cache
     async fn set_in_l2(&self, key: &str, entry: CacheEntry<Vec<u8>>) {
         self.l2_cache.insert(key.to_string(), entry);
     }
-    
+
     /// Set value in L3 cache
     async fn set_in_l3(&self, key: &str, entry: CacheEntry<Vec<u8>>) {
         self.l3_cache.insert(key.to_string(), entry);
     }
-    
+
     /// Promote entry to L1 cache
     async fn promote_to_l1(&self, key: &str, entry: CacheEntry<Vec<u8>>) {
         self.set_in_l1(key, entry).await;
     }
-    
+
     /// Promote entry to L2 cache
     async fn promote_to_l2(&self, key: &str, entry: CacheEntry<Vec<u8>>) {
         self.set_in_l2(key, entry).await;
     }
-    
+
     /// Serialize value with optional compression
     fn serialize_value<T: Serialize>(&self, value: &T) -> Result<Vec<u8>> {
-        let serialized = bincode::serialize(value)
-            .context("Failed to serialize value")?;
-        
+        let serialized = bincode::serialize(value).context("Failed to serialize value")?;
+
         if self.compression {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
             std::io::copy(&mut std::io::Cursor::new(&serialized), &mut encoder)
@@ -379,23 +397,21 @@ impl CacheManager {
             Ok(serialized)
         }
     }
-    
+
     /// Deserialize value with optional decompression
     fn deserialize_value<T: DeserializeOwned>(&self, data: &[u8]) -> Result<T> {
         let decompressed = if self.compression {
             let mut decoder = GzDecoder::new(data);
             let mut result = Vec::new();
-            std::io::copy(&mut decoder, &mut result)
-                .context("Failed to decompress value")?;
+            std::io::copy(&mut decoder, &mut result).context("Failed to decompress value")?;
             result
         } else {
             data.to_vec()
         };
-        
-        bincode::deserialize(&decompressed)
-            .context("Failed to deserialize value")
+
+        bincode::deserialize(&decompressed).context("Failed to deserialize value")
     }
-    
+
     /// Update cache statistics
     fn update_stats(&self, hit: bool, size: usize) {
         let mut stats = self.stats.write();
@@ -406,53 +422,56 @@ impl CacheManager {
         }
         stats.memory_usage = stats.memory_usage.saturating_add(size);
     }
-    
+
     /// Load persistent cache from disk
     async fn load_persistent_cache(&mut self) -> Result<()> {
         if let Some(path) = &self.persistence_path {
             if path.exists() {
                 info!("Loading persistent cache from: {}", path.display());
-                
-                let data = fs::read(path).await
+
+                let data = fs::read(path)
+                    .await
                     .context("Failed to read persistent cache file")?;
-                
+
                 let cache_data: HashMap<String, CacheEntry<Vec<u8>>> = bincode::deserialize(&data)
                     .context("Failed to deserialize persistent cache")?;
-                
+
                 let count = cache_data.len();
                 for (key, entry) in cache_data {
                     self.l3_cache.insert(key, entry);
                 }
-                
+
                 info!("Loaded {} entries from persistent cache", count);
             }
         }
         Ok(())
     }
-    
+
     /// Save persistent cache to disk
     async fn save_persistent_cache(&self) -> Result<()> {
         if let Some(path) = &self.persistence_path {
-            let cache_data: HashMap<String, CacheEntry<Vec<u8>>> = self.l3_cache
+            let cache_data: HashMap<String, CacheEntry<Vec<u8>>> = self
+                .l3_cache
                 .iter()
                 .map(|entry| (entry.key().clone(), entry.value().clone()))
                 .collect();
-            
-            let data = bincode::serialize(&cache_data)
-                .context("Failed to serialize persistent cache")?;
-            
-            fs::write(path, data).await
+
+            let data =
+                bincode::serialize(&cache_data).context("Failed to serialize persistent cache")?;
+
+            fs::write(path, data)
+                .await
                 .context("Failed to write persistent cache file")?;
-            
+
             debug!("Saved {} entries to persistent cache", cache_data.len());
         }
         Ok(())
     }
-    
+
     /// Start background tasks for cache maintenance
     fn start_background_tasks(&self) {
         let _l2_cache = self.l2_cache.clone();
-        
+
         // Background task for periodic cache cleanup
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
@@ -484,11 +503,12 @@ impl Drop for CacheManager {
         if self.persistence {
             // Save persistent cache on drop
             if let Some(path) = &self.persistence_path {
-                let cache_data: HashMap<String, CacheEntry<Vec<u8>>> = self.l3_cache
+                let cache_data: HashMap<String, CacheEntry<Vec<u8>>> = self
+                    .l3_cache
                     .iter()
                     .map(|entry| (entry.key().clone(), entry.value().clone()))
                     .collect();
-                
+
                 if let Ok(data) = bincode::serialize(&cache_data) {
                     if let Err(e) = std::fs::write(path, data) {
                         error!("Failed to save persistent cache on drop: {}", e);
@@ -522,20 +542,20 @@ mod tests {
             persistence: false,
             persistence_path: None,
         };
-        
+
         let cache = CacheManager::new(&config).await.unwrap();
-        
+
         let test_data = TestData {
             id: 1,
             name: "test".to_string(),
             data: vec![1, 2, 3, 4, 5],
         };
-        
+
         // Test set and get
         cache.set("test_key", &test_data, None).await.unwrap();
         let retrieved: Option<TestData> = cache.get("test_key").await.unwrap();
         assert_eq!(retrieved, Some(test_data));
-        
+
         // Test remove
         cache.remove("test_key").await.unwrap();
         let retrieved: Option<TestData> = cache.get("test_key").await.unwrap();
@@ -553,18 +573,18 @@ mod tests {
             persistence: false,
             persistence_path: None,
         };
-        
+
         let cache = CacheManager::new(&config).await.unwrap();
-        
+
         let test_data = TestData {
             id: 1,
             name: "test".to_string(),
             data: vec![1, 2, 3, 4, 5],
         };
-        
+
         // Test set and get with compression
         cache.set("test_key", &test_data, None).await.unwrap();
         let retrieved: Option<TestData> = cache.get("test_key").await.unwrap();
         assert_eq!(retrieved, Some(test_data));
     }
-} 
+}

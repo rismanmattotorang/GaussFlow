@@ -35,11 +35,11 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --locked
 
-  # ---- Non-gating (informational) until the formatting/lint/advisory debt is paid down. ----
-  # These surface the ~700 rustfmt diffs and ~166 clippy warnings tracked in the roadmap as a
-  # cross-cutting cleanup; they are scheduled to become gating once that debt is cleared.
+  # ---- Lint & audit. rustfmt is gating (the tree is fully formatted); clippy and audit are
+  # informational until the remaining warnings (mostly dead_code in modules slated for the
+  # Phase 1 consolidation) and dependency advisories are cleared. ----
   lint:
-    name: Lint & audit (informational)
+    name: Lint & audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,11 +55,10 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
 
-      - name: rustfmt
+      - name: rustfmt (gating)
         run: cargo fmt --all --check
-        continue-on-error: true
 
-      - name: clippy
+      - name: clippy (informational)
         run: cargo clippy --workspace --all-targets
         continue-on-error: true
 

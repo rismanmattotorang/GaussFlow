@@ -9,9 +9,9 @@
 use gaussflow_runtime::runtime::{
     metrics::RuntimeMetrics,
     optimized_executor::{OptimizedExecutor, OptimizedExecutorConfig},
+    pool::MemoryPool,
     scheduler::Scheduler,
     steal_queue::{StealQueue, Stealer as QueueStealer, Worker as QueueWorker},
-    pool::MemoryPool,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -30,25 +30,25 @@ async fn test_concurrent_task_spawning() {
         enable_work_stealing: true,
         ..Default::default()
     };
-    
+
     let executor = OptimizedExecutor::new(config);
     let handle = executor.handle();
     let counter = Arc::new(AtomicUsize::new(0));
-    
+
     // Spawn tasks concurrently from multiple threads
     let num_threads = 10;
     let tasks_per_thread = 1000;
     let mut handles = Vec::new();
-    
+
     for _ in 0..num_threads {
         let handle = handle.clone();
         let counter = counter.clone();
-        
+
         let thread_handle = thread::spawn(move || {
             for _ in 0..tasks_per_thread {
                 let handle = handle.clone();
                 let counter = counter.clone();
-                
+
                 handle.spawn(async move {
                     // Simulate work
                     sleep(Duration::from_millis(1)).await;
@@ -56,32 +56,36 @@ async fn test_concurrent_task_spawning() {
                 });
             }
         });
-        
+
         handles.push(thread_handle);
     }
-    
+
     // Wait for all threads to spawn tasks
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Run executor
     let executor_handle = thread::spawn(move || {
         executor.run();
     });
-    
+
     // Wait for all tasks to complete
     let start = std::time::Instant::now();
-    while counter.load(Ordering::Relaxed) < num_threads * tasks_per_thread 
-        && start.elapsed() < Duration::from_secs(30) 
+    while counter.load(Ordering::Relaxed) < num_threads * tasks_per_thread
+        && start.elapsed() < Duration::from_secs(30)
     {
         sleep(Duration::from_millis(10)).await;
     }
-    
+
     let completed = counter.load(Ordering::Relaxed);
-    assert_eq!(completed, num_threads * tasks_per_thread, 
-               "Expected {} tasks, but only {} completed", 
-               num_threads * tasks_per_thread, completed);
+    assert_eq!(
+        completed,
+        num_threads * tasks_per_thread,
+        "Expected {} tasks, but only {} completed",
+        num_threads * tasks_per_thread,
+        completed
+    );
 }
 
 /// Test concurrent memory pool access
@@ -91,40 +95,40 @@ async fn test_concurrent_memory_pool() {
         memory_pool_size: 1024 * 1024, // 1MB
         ..Default::default()
     };
-    
+
     let executor = OptimizedExecutor::new(config);
     let handle = executor.handle();
     let pool = handle.memory_pool();
-    
+
     let num_threads = 8;
     let allocations_per_thread = 100;
     let mut handles = Vec::new();
-    
+
     for _ in 0..num_threads {
         let pool = pool.clone();
-        
+
         let handle = thread::spawn(move || {
             let mut buffers = Vec::new();
-            
+
             for _ in 0..allocations_per_thread {
                 let size = 1024 + (rand::random::<usize>() % 4096);
                 let mut buf = pool.get_with_capacity(size);
                 buf.extend(std::iter::repeat(0).take(size));
                 buffers.push(buf);
             }
-            
+
             // Deallocate all buffers
             drop(buffers);
         });
-        
+
         handles.push(handle);
     }
-    
+
     // Wait for all threads to complete
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Verify pool is still functional
     let test_buf = pool.get_with_capacity(1024);
     assert_eq!(test_buf.capacity(), 1024);
@@ -135,15 +139,15 @@ async fn test_concurrent_memory_pool() {
 async fn test_concurrent_scheduler() {
     let metrics = Arc::new(RuntimeMetrics::new());
     let scheduler = Scheduler::new(metrics);
-    
+
     let num_workers = 4;
     let tasks_per_worker = 1000;
     let mut worker_handles = Vec::new();
-    
+
     // Start worker threads
     for worker_id in 0..num_workers {
         let scheduler = scheduler.clone();
-        
+
         let handle = thread::spawn(move || {
             let mut count = 0;
             while count < tasks_per_worker {
@@ -155,31 +159,31 @@ async fn test_concurrent_scheduler() {
             }
             count
         });
-        
+
         worker_handles.push(handle);
     }
-    
+
     // Schedule tasks from multiple threads
     let num_schedulers = 4;
     let mut scheduler_handles = Vec::new();
-    
+
     for _ in 0..num_schedulers {
         let scheduler = scheduler.clone();
-        
+
         let handle = thread::spawn(move || {
             for _ in 0..(num_workers * tasks_per_worker / num_schedulers) {
                 scheduler.schedule(Box::new(|| {}), 0);
             }
         });
-        
+
         scheduler_handles.push(handle);
     }
-    
+
     // Wait for all schedulers to complete
     for handle in scheduler_handles {
         handle.join().unwrap();
     }
-    
+
     // Wait for all workers to complete
     let total: usize = worker_handles.into_iter().map(|h| h.join().unwrap()).sum();
     assert_eq!(total, num_workers * tasks_per_worker);
@@ -190,23 +194,23 @@ async fn test_concurrent_scheduler() {
 async fn test_concurrent_steal_queue() {
     let num_workers = 8;
     let tasks_per_worker = 1000;
-    
+
     // Create workers and stealers
     let workers: Vec<_> = (0..num_workers).map(|_| QueueWorker::new_fifo()).collect();
     let stealers: Vec<_> = workers.iter().map(|w| w.stealer()).collect();
-    
+
     // Push tasks to first worker
     for i in 0..(num_workers * tasks_per_worker) {
         workers[0].push(i);
     }
-    
+
     // Steal tasks in parallel
     let counter = Arc::new(AtomicUsize::new(0));
     let mut handles = Vec::new();
-    
+
     for (worker_id, stealer) in stealers.into_iter().enumerate() {
         let counter = counter.clone();
-        
+
         let handle = thread::spawn(move || {
             let mut count = 0;
             while count < tasks_per_worker {
@@ -216,16 +220,19 @@ async fn test_concurrent_steal_queue() {
                 }
             }
         });
-        
+
         handles.push(handle);
     }
-    
+
     // Wait for all tasks to be stolen
     for handle in handles {
         handle.join().unwrap();
     }
-    
-    assert_eq!(counter.load(Ordering::Relaxed), num_workers * tasks_per_worker);
+
+    assert_eq!(
+        counter.load(Ordering::Relaxed),
+        num_workers * tasks_per_worker
+    );
 }
 
 /// Test concurrent batch processing
@@ -237,53 +244,53 @@ async fn test_concurrent_batch_processing() {
         batch_size: 100,
         ..Default::default()
     };
-    
+
     let executor = OptimizedExecutor::new(config);
     let handle = executor.handle();
     let counter = Arc::new(AtomicUsize::new(0));
-    
+
     let num_batches = 10;
     let tasks_per_batch = 1000;
     let mut handles = Vec::new();
-    
+
     // Submit batches concurrently
     for _ in 0..num_batches {
         let handle = handle.clone();
         let counter = counter.clone();
-        
+
         let thread_handle = thread::spawn(move || {
             for _ in 0..tasks_per_batch {
                 let handle = handle.clone();
                 let counter = counter.clone();
-                
+
                 handle.spawn(async move {
                     let _ = handle.submit_batch(1).await;
                     counter.fetch_add(1, Ordering::Relaxed);
                 });
             }
         });
-        
+
         handles.push(thread_handle);
     }
-    
+
     // Wait for all threads to submit tasks
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Run executor
     let executor_handle = thread::spawn(move || {
         executor.run();
     });
-    
+
     // Wait for all tasks to complete
     let start = std::time::Instant::now();
-    while counter.load(Ordering::Relaxed) < num_batches * tasks_per_batch 
-        && start.elapsed() < Duration::from_secs(30) 
+    while counter.load(Ordering::Relaxed) < num_batches * tasks_per_batch
+        && start.elapsed() < Duration::from_secs(30)
     {
         sleep(Duration::from_millis(10)).await;
     }
-    
+
     let completed = counter.load(Ordering::Relaxed);
     assert_eq!(completed, num_batches * tasks_per_batch);
 }
@@ -295,11 +302,11 @@ async fn test_concurrent_metrics() {
     let num_threads = 10;
     let operations_per_thread = 1000;
     let mut handles = Vec::new();
-    
+
     // Concurrently update metrics
     for _ in 0..num_threads {
         let metrics = metrics.clone();
-        
+
         let handle = thread::spawn(move || {
             for _ in 0..operations_per_thread {
                 metrics.increment_tasks_completed();
@@ -307,18 +314,21 @@ async fn test_concurrent_metrics() {
                 metrics.increment_tasks_failed();
             }
         });
-        
+
         handles.push(handle);
     }
-    
+
     // Wait for all threads to complete
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Verify metrics
     let snapshot = metrics.snapshot();
-    assert_eq!(snapshot.tasks_completed, num_threads * operations_per_thread);
+    assert_eq!(
+        snapshot.tasks_completed,
+        num_threads * operations_per_thread
+    );
     assert_eq!(snapshot.tasks_failed, num_threads * operations_per_thread);
 }
 
@@ -332,54 +342,56 @@ async fn test_stress_test() {
         memory_pool_size: 1024 * 1024,
         ..Default::default()
     };
-    
+
     let executor = OptimizedExecutor::new(config);
     let handle = executor.handle();
     let counter = Arc::new(AtomicUsize::new(0));
-    
+
     let num_operations = 10000;
     let mut handles = Vec::new();
-    
+
     // Mix of different operations
     for i in 0..num_operations {
         let handle = handle.clone();
         let counter = counter.clone();
-        
+
         let handle = thread::spawn(move || {
             // Spawn task
             let handle = handle.clone();
             let counter = counter.clone();
-            
+
             handle.spawn(async move {
                 // Simulate work
                 sleep(Duration::from_millis(rand::random::<u64>() % 10)).await;
                 counter.fetch_add(1, Ordering::Relaxed);
             });
         });
-        
+
         handles.push(handle);
     }
-    
+
     // Wait for all spawn operations
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Run executor
     let executor_handle = thread::spawn(move || {
         executor.run();
     });
-    
+
     // Wait for completion
     let start = std::time::Instant::now();
-    while counter.load(Ordering::Relaxed) < num_operations 
-        && start.elapsed() < Duration::from_secs(60) 
+    while counter.load(Ordering::Relaxed) < num_operations
+        && start.elapsed() < Duration::from_secs(60)
     {
         sleep(Duration::from_millis(100)).await;
     }
-    
+
     let completed = counter.load(Ordering::Relaxed);
-    assert_eq!(completed, num_operations, 
-               "Expected {} operations, but only {} completed", 
-               num_operations, completed);
-} 
+    assert_eq!(
+        completed, num_operations,
+        "Expected {} operations, but only {} completed",
+        num_operations, completed
+    );
+}

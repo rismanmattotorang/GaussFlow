@@ -7,7 +7,7 @@
 #![cfg(feature = "legacy_tests")]
 
 use gaussflow_core::{
-    model::{EdgeSpec, NodeSpec, NodeType, WorkflowSpec, WorkflowSettings},
+    model::{EdgeSpec, NodeSpec, NodeType, WorkflowSettings, WorkflowSpec},
     TypeSafeDag,
 };
 use std::path::Path;
@@ -53,7 +53,11 @@ pub fn create_linear_workflow(node_count: usize) -> WorkflowSpec {
 /// Asserts that a file exists
 #[track_caller]
 pub fn assert_file_exists(path: impl AsRef<Path>) {
-    assert!(path.as_ref().exists(), "File does not exist: {:?}", path.as_ref());
+    assert!(
+        path.as_ref().exists(),
+        "File does not exist: {:?}",
+        path.as_ref()
+    );
 }
 
 /// Asserts that a directory exists

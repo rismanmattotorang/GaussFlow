@@ -4,10 +4,8 @@ use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber::{fmt, EnvFilter};
-use std::process::ExitCode;
 
 mod cache;
 mod commands;
@@ -18,13 +16,12 @@ mod server;
 mod utils;
 
 use cache::CacheManager;
-use commands::*;
 use config::ConfigManager;
 use database::DatabaseManager;
 use metrics::MetricsManager;
 
 /// GaussFlow: Advanced DAG Workflow Engine for Multi-LLM & Agent Pipelines
-/// 
+///
 /// A high-performance, production-ready workflow engine with advanced features:
 /// - Parallel execution with intelligent scheduling
 /// - Real-time monitoring and metrics
@@ -68,31 +65,31 @@ struct Cli {
 enum Commands {
     /// Validate workflow specifications
     Validate(ValidateCommand),
-    
+
     /// Execute workflows with advanced features
     Run(RunCommand),
-    
+
     /// Manage workflow templates and libraries
     Template(TemplateCommand),
-    
+
     /// Monitor and manage running workflows
     Monitor(MonitorCommand),
-    
+
     /// Manage workflow history and artifacts
     History(HistoryCommand),
-    
+
     /// Configure GaussFlow settings
     Config(ConfigCommand),
-    
+
     /// Start the GaussFlow server
     Serve(ServeCommand),
-    
+
     /// Performance testing and benchmarking
     Bench(BenchCommand),
-    
+
     /// Database management operations
     Db(DbCommand),
-    
+
     /// Cache management operations
     Cache(CacheCommand),
 }
@@ -110,30 +107,30 @@ struct AppState {
 async fn main() -> Result<()> {
     // Parse CLI arguments
     let cli = Cli::parse();
-    
+
     // Initialize logging with advanced configuration
     init_logging(&cli)?;
-    
+
     // Initialize application state
     let state = init_app_state(&cli).await?;
-    
+
     // Initialize metrics if enabled
     if cli.metrics {
         // Note: init() requires mutable access, but we have Arc
         // We'll initialize metrics in the MetricsManager::new() instead
     }
-    
+
     // Record startup metrics
     state.metrics.record_startup().await;
-    
+
     info!("GaussFlow CLI initialized successfully");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
     info!("Debug mode: {}", cli.debug);
     info!("Metrics enabled: {}", cli.metrics);
-    
+
     // Execute command with enhanced error handling
     let result = execute_command(cli.command, state).await;
-    
+
     match result {
         Ok(_) => {
             info!("Command completed successfully");
@@ -157,10 +154,10 @@ fn init_logging(cli: &Cli) -> Result<()> {
     } else {
         "warn"
     };
-    
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(log_level));
-    
+
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+
     // Configure structured logging with JSON output
     let subscriber = fmt::Subscriber::builder()
         .with_env_filter(env_filter)
@@ -172,26 +169,26 @@ fn init_logging(cli: &Cli) -> Result<()> {
         .with_ansi(false)
         .json()
         .finish();
-    
+
     tracing::subscriber::set_global_default(subscriber)
         .context("Failed to set tracing subscriber")?;
-    
+
     Ok(())
 }
 
 async fn init_app_state(cli: &Cli) -> Result<AppState> {
     // Initialize configuration manager
     let config = Arc::new(ConfigManager::new(cli.config.clone()).await?);
-    
+
     // Initialize cache manager with advanced features
     let cache = Arc::new(CacheManager::new(&config.get().await.cache).await?);
-    
+
     // Initialize database manager
     let database = Arc::new(DatabaseManager::new(&config.get().await.database).await?);
-    
+
     // Initialize metrics manager
     let metrics = Arc::new(MetricsManager::new(&config.get().await.metrics).await?);
-    
+
     Ok(AppState {
         config,
         cache,
@@ -208,45 +205,29 @@ async fn execute_command(command: Commands, state: AppState) -> Result<()> {
             pb.finish_with_message("Validation completed");
             result
         }
-        
+
         Commands::Run(cmd) => {
             let pb = create_progress_bar("Executing workflow");
             let result = run_workflow(cmd, state, pb.clone()).await;
             pb.finish_with_message("Execution completed");
             result
         }
-        
-        Commands::Template(cmd) => {
-            manage_templates(cmd, state).await
-        }
-        
-        Commands::Monitor(cmd) => {
-            monitor_workflows(cmd, state).await
-        }
-        
-        Commands::History(cmd) => {
-            manage_history(cmd, state).await
-        }
-        
-        Commands::Config(cmd) => {
-            manage_config(cmd, state).await
-        }
-        
-        Commands::Serve(cmd) => {
-            start_server(cmd, state).await
-        }
-        
-        Commands::Bench(cmd) => {
-            run_benchmarks(cmd, state).await
-        }
-        
-        Commands::Db(cmd) => {
-            manage_database(cmd, state).await
-        }
-        
-        Commands::Cache(cmd) => {
-            manage_cache(cmd, state).await
-        }
+
+        Commands::Template(cmd) => manage_templates(cmd, state).await,
+
+        Commands::Monitor(cmd) => monitor_workflows(cmd, state).await,
+
+        Commands::History(cmd) => manage_history(cmd, state).await,
+
+        Commands::Config(cmd) => manage_config(cmd, state).await,
+
+        Commands::Serve(cmd) => start_server(cmd, state).await,
+
+        Commands::Bench(cmd) => run_benchmarks(cmd, state).await,
+
+        Commands::Db(cmd) => manage_database(cmd, state).await,
+
+        Commands::Cache(cmd) => manage_cache(cmd, state).await,
     }
 }
 
@@ -269,7 +250,7 @@ pub use commands::*;
 fn handle_cli_error(error: &anyhow::Error) -> i32 {
     // Determine exit code based on error type
     let error_string = error.to_string().to_lowercase();
-    
+
     if error_string.contains("timeout") || error_string.contains("timed out") {
         124 // SIGTERM timeout
     } else if error_string.contains("permission") || error_string.contains("access denied") {
@@ -290,7 +271,7 @@ fn handle_cli_error(error: &anyhow::Error) -> i32 {
 /// Display error with enhanced formatting and user-friendly messages
 fn display_error(error: &anyhow::Error) {
     let error_string = error.to_string();
-    
+
     // Determine error type and provide appropriate user message
     let (severity_icon, user_message) = if error_string.contains("timeout") {
         ("⏰", "Operation timed out. Please try again.")
@@ -301,29 +282,54 @@ fn display_error(error: &anyhow::Error) {
     } else if error_string.contains("invalid") {
         ("⚠️", "Invalid input. Please check your parameters.")
     } else if error_string.contains("authentication") {
-        ("🔐", "Authentication failed. Please check your credentials.")
+        (
+            "🔐",
+            "Authentication failed. Please check your credentials.",
+        )
     } else if error_string.contains("network") || error_string.contains("connection") {
-        ("🌐", "Network error. Please check your internet connection.")
+        (
+            "🌐",
+            "Network error. Please check your internet connection.",
+        )
     } else if error_string.contains("workflow") {
-        ("⚙️", "Workflow error. Please check the workflow definition.")
+        (
+            "⚙️",
+            "Workflow error. Please check the workflow definition.",
+        )
     } else {
         ("❌", "An unexpected error occurred. Please try again.")
     };
 
     // Display error with proper formatting
-    eprintln!("{} {}", style(severity_icon).red().bold(), style(user_message).red());
-    
+    eprintln!(
+        "{} {}",
+        style(severity_icon).red().bold(),
+        style(user_message).red()
+    );
+
     // Show detailed error in debug mode or if verbose
-    if std::env::var("RUST_LOG").unwrap_or_default().contains("debug") {
+    if std::env::var("RUST_LOG")
+        .unwrap_or_default()
+        .contains("debug")
+    {
         eprintln!("{} {}", style("Details:").dim(), error_string);
     }
-    
+
     // Provide helpful suggestions
     if error_string.contains("configuration") {
-        eprintln!("{} Run 'gaussflow config show' to view current configuration", style("💡").blue());
+        eprintln!(
+            "{} Run 'gaussflow config show' to view current configuration",
+            style("💡").blue()
+        );
     } else if error_string.contains("workflow") {
-        eprintln!("{} Run 'gaussflow validate <workflow>' to check workflow syntax", style("💡").blue());
+        eprintln!(
+            "{} Run 'gaussflow validate <workflow>' to check workflow syntax",
+            style("💡").blue()
+        );
     } else if error_string.contains("network") {
-        eprintln!("{} Check your internet connection and firewall settings", style("💡").blue());
+        eprintln!(
+            "{} Check your internet connection and firewall settings",
+            style("💡").blue()
+        );
     }
 }

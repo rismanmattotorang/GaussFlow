@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use crate::ResourceSpec;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use thiserror::Error;
-use crate::ResourceSpec;
 
 /// Authentication policy configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,16 +255,16 @@ pub enum ExportConfig {
 pub enum NodeError {
     #[error("Node validation failed: {0}")]
     Validation(String),
-    
+
     #[error("Node execution failed: {0}")]
     Execution(String),
-    
+
     #[error("Node configuration error: {0}")]
     Configuration(String),
-    
+
     #[error("Resource allocation failed: {0}")]
     Resource(String),
-    
+
     #[error("Policy enforcement failed: {0}")]
     Policy(String),
 }

@@ -5,11 +5,10 @@ use std::hash::{Hash, Hasher};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::dag::{DagEdge, DagNode};
-use uuid::Uuid;
 use crate::hash_impls::hash_json_value;
+use uuid::Uuid;
 
 /// Top-level specification for a GaussFlow workflow.
 /// Matches the `GaussFlow JSON` format.
@@ -75,36 +74,44 @@ pub struct WorkflowSettings {
     /// Maximum number of parallel node executions
     #[serde(default)]
     pub concurrency: Option<u32>,
-    
+
     /// Whether to fail fast on first error
     #[serde(default)]
     pub fail_fast: bool,
-    
+
     /// Whether to resume from last checkpoint if available
     #[serde(default)]
     pub resume: bool,
-    
+
     /// Whether to enable checkpointing
     #[serde(default = "default_true")]
     pub enable_checkpoints: bool,
-    
+
     /// Interval between automatic checkpoints (in milliseconds)
     #[serde(default = "default_checkpoint_interval")]
     pub checkpoint_interval_ms: u64,
-    
+
     /// Maximum number of checkpoints to keep
     #[serde(default = "default_max_checkpoints")]
     pub max_checkpoints: usize,
-    
+
     /// Version of the workflow specification
     #[serde(default = "default_version")]
     pub version: String,
 }
 
-fn default_true() -> bool { true }
-fn default_checkpoint_interval() -> u64 { 60_000 } // 1 minute
-fn default_max_checkpoints() -> usize { 10 }
-fn default_version() -> String { "1.0".to_string() }
+fn default_true() -> bool {
+    true
+}
+fn default_checkpoint_interval() -> u64 {
+    60_000
+} // 1 minute
+fn default_max_checkpoints() -> usize {
+    10
+}
+fn default_version() -> String {
+    "1.0".to_string()
+}
 
 /// The type of a node, determining its execution logic.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -112,25 +119,25 @@ fn default_version() -> String { "1.0".to_string() }
 pub enum NodeType {
     /// A node that makes LLM API calls
     LlmCall,
-    
+
     /// An autonomous agent that can make decisions
     Agent,
-    
+
     /// An ensemble of multiple models
     Ensemble,
-    
+
     /// Routes data based on conditions
     Router,
-    
+
     /// A sub-workflow
     Subgraph,
-    
+
     /// A data processing node
     DataProcessor,
-    
+
     /// A conditional node (if/else)
     Conditional,
-    
+
     /// A parallel execution node
     Parallel,
 }
@@ -141,10 +148,15 @@ impl DagNode for NodeSpec {
     fn validate(&self) -> Result<(), crate::dag::DagValidationError> {
         // Basic validation - ensure required fields are present
         if self.id.is_empty() {
-            return Err(crate::dag::DagValidationError::NodeValidation("Node ID cannot be empty".to_string()));
+            return Err(crate::dag::DagValidationError::NodeValidation(
+                "Node ID cannot be empty".to_string(),
+            ));
         }
-        if self.name.as_ref().map_or(true, |n| n.is_empty()) {
-            return Err(crate::dag::DagValidationError::NodeValidation(format!("Node '{}' must have a name", self.id)));
+        if self.name.as_ref().is_none_or(|n| n.is_empty()) {
+            return Err(crate::dag::DagValidationError::NodeValidation(format!(
+                "Node '{}' must have a name",
+                self.id
+            )));
         }
         // Add more validation as needed
         Ok(())
@@ -163,19 +175,17 @@ impl DagNode for NodeSpec {
 
     fn priority(&self) -> u8 {
         // Get priority from the resources field or use default
-        self.resources.as_ref()
-            .map(|r| r.priority)
-            .unwrap_or(5) // Default priority of 5 if not specified
+        self.resources.as_ref().map(|r| r.priority).unwrap_or(5) // Default priority of 5 if not specified
     }
-    
+
     fn id(&self) -> &str {
         &self.id
     }
-    
+
     fn name(&self) -> &str {
         self.name.as_deref().unwrap_or("")
     }
-    
+
     fn node_type(&self) -> &str {
         match &self.node_type {
             NodeType::LlmCall => "llm_call",
@@ -205,24 +215,30 @@ impl DagEdge for EdgeSpec {
             labels: HashMap::new(),
         }
     }
-    
+
     fn validate(&self) -> Result<(), crate::dag::DagValidationError> {
         if self.from.is_empty() {
-            return Err(crate::dag::DagValidationError::EdgeValidation("Edge source cannot be empty".to_string()));
+            return Err(crate::dag::DagValidationError::EdgeValidation(
+                "Edge source cannot be empty".to_string(),
+            ));
         }
         if self.to.is_empty() {
-            return Err(crate::dag::DagValidationError::EdgeValidation("Edge target cannot be empty".to_string()));
+            return Err(crate::dag::DagValidationError::EdgeValidation(
+                "Edge target cannot be empty".to_string(),
+            ));
         }
         if self.from == self.to {
-            return Err(crate::dag::DagValidationError::EdgeValidation("Edge cannot connect a node to itself".to_string()));
+            return Err(crate::dag::DagValidationError::EdgeValidation(
+                "Edge cannot connect a node to itself".to_string(),
+            ));
         }
         Ok(())
     }
-    
+
     fn source(&self) -> String {
         self.from.clone()
     }
-    
+
     fn target(&self) -> String {
         self.to.clone()
     }
@@ -233,51 +249,51 @@ impl DagEdge for EdgeSpec {
 pub struct NodeSpec {
     /// Unique identifier for the node
     pub id: String,
-    
+
     /// Type of the node
     #[serde(rename = "type")]
     pub node_type: NodeType,
-    
+
     /// Human-readable name for the node
     #[serde(default)]
     pub name: Option<String>,
-    
+
     /// Description of what the node does
     #[serde(default)]
     pub description: Option<String>,
-    
+
     /// Node type specific configuration
     #[serde(flatten)]
     pub config: NodeConfig,
-    
+
     /// Custom metadata as key-value pairs
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
-    
+
     /// Parameters for the node
     #[serde(default)]
     pub params: HashMap<String, serde_json::Value>,
-    
+
     /// Retry policy for the node
     #[serde(default)]
     pub retry: Option<RetrySpec>,
-    
+
     /// Resource requirements for this node
     #[serde(default)]
     pub resources: Option<crate::resource::ResourceSpec>,
-    
+
     /// Timeout in milliseconds
     #[serde(default)]
     pub timeout_ms: Option<u64>,
-    
+
     /// Maximum number of retries on failure
     #[serde(default)]
     pub max_retries: Option<u32>,
-    
+
     /// Tags for categorization and filtering
     #[serde(default)]
     pub tags: Vec<String>,
-    
+
     /// Whether this node is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -288,27 +304,27 @@ impl Hash for NodeSpec {
         self.id.hash(state);
         self.name.hash(state);
         self.node_type.hash(state);
-        
+
         // Hash the config using our custom hashing
         if let Ok(json) = serde_json::to_value(&self.config) {
             hash_json_value(&json, state);
         }
-        
+
         // Hash metadata by serializing to JSON
         if let Ok(json) = serde_json::to_value(&self.metadata) {
             hash_json_value(&json, state);
         }
-        
+
         // Hash params by serializing to JSON
         if let Ok(json) = serde_json::to_value(&self.params) {
             hash_json_value(&json, state);
         }
-        
+
         // Hash retry if present
         if let Some(ref retry) = self.retry {
             retry.hash(state);
         }
-        
+
         // Hash resources if present
         if let Some(ref resources) = self.resources {
             resources.hash(state);
@@ -322,40 +338,38 @@ impl PartialEq for NodeSpec {
         if self.id != other.id || self.name != other.name || self.node_type != other.node_type {
             return false;
         }
-        
+
         // Compare configs by serializing to JSON
         let self_config = serde_json::to_value(&self.config).ok();
         let other_config = serde_json::to_value(&other.config).ok();
         if self_config != other_config {
             return false;
         }
-        
+
         // Compare metadata and params by serializing to JSON
         let self_meta = serde_json::to_value(&self.metadata).ok();
         let other_meta = serde_json::to_value(&other.metadata).ok();
         if self_meta != other_meta {
             return false;
         }
-        
+
         let self_params = serde_json::to_value(&self.params).ok();
         let other_params = serde_json::to_value(&other.params).ok();
         if self_params != other_params {
             return false;
         }
-        
+
         // Compare other fields
-        self.retry == other.retry && 
-        self.resources == other.resources &&
-        self.timeout_ms == other.timeout_ms &&
-        self.max_retries == other.max_retries &&
-        self.tags == other.tags &&
-        self.enabled == other.enabled
+        self.retry == other.retry
+            && self.resources == other.resources
+            && self.timeout_ms == other.timeout_ms
+            && self.max_retries == other.max_retries
+            && self.tags == other.tags
+            && self.enabled == other.enabled
     }
 }
 
 impl Eq for NodeSpec {}
-
-
 
 /// Node type specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -365,47 +379,47 @@ pub enum NodeConfig {
     LlmCall {
         /// Model to use (e.g., "gpt-4", "claude-2")
         model: String,
-        
+
         /// Maximum tokens to generate
         max_tokens: Option<u32>,
-        
+
         /// Sampling temperature
         temperature: Option<f32>,
-        
+
         /// Top-p sampling
         top_p: Option<f32>,
-        
+
         /// Stop sequences
         stop: Option<Vec<String>>,
     },
-    
+
     /// Configuration for agent nodes
     Agent {
         /// Agent type
         agent_type: String,
-        
+
         /// Agent configuration
         config: HashMap<String, serde_json::Value>,
     },
-    
+
     /// Configuration for router nodes
     Router {
         /// Routing conditions
         conditions: Vec<RouterCondition>,
-        
+
         /// Default route if no conditions match
         default_route: Option<String>,
     },
-    
+
     /// Configuration for subgraph nodes
     Subgraph {
         /// Reference to the sub-workflow
         workflow_id: String,
-        
+
         /// Input mapping
         inputs: HashMap<String, String>,
     },
-    
+
     /// Fallback for unknown/unspecified node types
     Generic(HashMap<String, serde_json::Value>),
 }
@@ -432,10 +446,10 @@ impl Eq for NodeConfig {}
 pub struct RouterCondition {
     /// Condition expression (e.g., "{{input.length}} > 10")
     pub condition: String,
-    
+
     /// Target node ID if condition is true
     pub target: String,
-    
+
     /// Optional description
     #[serde(default)]
     pub description: Option<String>,
@@ -463,17 +477,12 @@ pub struct RetrySpec {
     pub timeout: Option<Duration>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum Backoff {
+    #[default]
     Fixed,
     Exponential,
     Linear,
-}
-
-impl Default for Backoff {
-    fn default() -> Self {
-        Self::Fixed
-    }
 }
 
 impl Default for RetrySpec {

@@ -1,14 +1,14 @@
-use std::sync::Arc;
-use dashmap::DashMap;
-use priority_queue::PriorityQueue;
-use tokio::sync::{Semaphore, OwnedSemaphorePermit};
-use thiserror::Error;
-use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
-use crate::dag::{TypeSafeDag, DagNode, DagEdge};
+use crate::dag::{DagEdge, DagNode, TypeSafeDag};
 use crate::resource::ResourceSpec;
 use crate::NodeId;
+use async_trait::async_trait;
+use dashmap::DashMap;
+use priority_queue::PriorityQueue;
+use serde::{Deserialize, Serialize};
 use std::hash::Hash;
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchedulerConfig {
@@ -42,28 +42,38 @@ pub enum RetryStrategy {
 pub enum SchedulerError {
     #[error("Task scheduling failed: {0}")]
     Scheduling(String),
-    
+
     #[error("Resource allocation failed: {0}")]
     Resource(String),
-    
+
     #[error("Priority calculation failed: {0}")]
     Priority(String),
 }
-
-
 
 #[async_trait]
 pub trait Scheduler: Send + Sync + 'static {
     type Node: DagNode;
     type Edge: DagEdge;
-    
-    fn optimize(&self, dag: TypeSafeDag<Self::Node, Self::Edge>) -> TypeSafeDag<Self::Node, Self::Edge>;
-    fn partition(&self, dag: TypeSafeDag<Self::Node, Self::Edge>) -> Vec<TypeSafeDag<Self::Node, Self::Edge>>;
+
+    fn optimize(
+        &self,
+        dag: TypeSafeDag<Self::Node, Self::Edge>,
+    ) -> TypeSafeDag<Self::Node, Self::Edge>;
+    fn partition(
+        &self,
+        dag: TypeSafeDag<Self::Node, Self::Edge>,
+    ) -> Vec<TypeSafeDag<Self::Node, Self::Edge>>;
     fn schedule_task(
         &mut self,
         node_id: &NodeId,
         spec: &ResourceSpec,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<OwnedSemaphorePermit, SchedulerError>> + Send + '_>>;
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<OwnedSemaphorePermit, SchedulerError>>
+                + Send
+                + '_,
+        >,
+    >;
     fn get_task_priority(
         &self,
         node_id: &NodeId,
@@ -97,7 +107,10 @@ pub struct TaskStatusDetails {
 }
 
 impl<N, E> PriorityScheduler<N, E> {
-    pub fn new(config: SchedulerConfig, resource_manager: Arc<crate::resource::ResourceManager>) -> Self {
+    pub fn new(
+        config: SchedulerConfig,
+        resource_manager: Arc<crate::resource::ResourceManager>,
+    ) -> Self {
         Self {
             config,
             resource_manager,
@@ -111,28 +124,26 @@ impl<N, E> PriorityScheduler<N, E> {
     fn calculate_priority(&self, _node_id: &NodeId, spec: &ResourceSpec) -> u8 {
         let base_priority = 5; // Default priority if not specified
         let resource_factor = (spec.cpu_cores as f32 * 0.5 + spec.gpu_count as f32 * 0.5) as u8;
-        
+
         // Use memory_mb directly instead of parsing from string
         let memory_factor = (spec.memory_mb / 1024) as u8; // Convert MB to GB for factor
-        
+
         // Combine factors with weights (normalize to 1-100 range)
-        let priority = (base_priority as f32 * 0.4 + 
-                       resource_factor as f32 * 0.3 + 
-                       memory_factor as f32 * 0.3) as u8;
-        
+        let priority = (base_priority as f32 * 0.4
+            + resource_factor as f32 * 0.3
+            + memory_factor as f32 * 0.3) as u8;
+
         priority.clamp(1, 100)
     }
 
     fn calculate_resource_score(&self, spec: &ResourceSpec) -> u32 {
         // Simple weighted sum of resources
         // Higher score means more resource-intensive
-        (spec.cpu_cores as u32 * 100) + 
-        (spec.gpu_count as u32 * 500) + 
-        (spec.memory_mb as u32 * 10)
+        (spec.cpu_cores * 100) + (spec.gpu_count * 500) + (spec.memory_mb as u32 * 10)
     }
 }
 
-impl<N, E> Scheduler for PriorityScheduler<N, E> 
+impl<N, E> Scheduler for PriorityScheduler<N, E>
 where
     N: DagNode + 'static,
     E: DagEdge + 'static,
@@ -141,7 +152,10 @@ where
     type Node = N;
     type Edge = E;
 
-    fn optimize(&self, dag: TypeSafeDag<Self::Node, Self::Edge>) -> TypeSafeDag<Self::Node, Self::Edge> {
+    fn optimize(
+        &self,
+        dag: TypeSafeDag<Self::Node, Self::Edge>,
+    ) -> TypeSafeDag<Self::Node, Self::Edge> {
         // Implement DAG optimization logic here
         // For now, just return the original DAG
         dag
@@ -158,34 +172,44 @@ where
         &mut self,
         node_id: &NodeId,
         spec: &ResourceSpec,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<OwnedSemaphorePermit, SchedulerError>> + Send + '_>> {
-        let node_id = node_id.clone();
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<OwnedSemaphorePermit, SchedulerError>>
+                + Send
+                + '_,
+        >,
+    > {
+        let node_id = *node_id;
         let spec = spec.clone();
         let priority = self.calculate_priority(&node_id, &spec);
-        
+
         // Add task to queue if not already present
         if !self.task_queue.iter().any(|(id, _)| id == &node_id) {
-            self.task_queue.push(node_id.clone(), priority);
+            self.task_queue.push(node_id, priority);
         }
-        
+
         // Get or create semaphore for this task
-        let semaphore = self.semaphores.entry(node_id.clone())
+        let semaphore = self
+            .semaphores
+            .entry(node_id)
             .or_insert_with(|| Arc::new(Semaphore::new(1)))
             .clone();
-        
+
         let task_status = self.task_status.clone();
-        
+
         Box::pin(async move {
             // Try to acquire semaphore permit
             match semaphore.try_acquire_owned() {
                 Ok(permit) => {
-                    task_status.insert(node_id.clone(), TaskStatus::Running);
+                    task_status.insert(node_id, TaskStatus::Running);
                     Ok(permit)
-                },
+                }
                 Err(_) => {
-                    task_status.insert(node_id.clone(), TaskStatus::Waiting);
-                    Err(SchedulerError::Resource("Failed to acquire semaphore".into()))
-                },
+                    task_status.insert(node_id, TaskStatus::Waiting);
+                    Err(SchedulerError::Resource(
+                        "Failed to acquire semaphore".into(),
+                    ))
+                }
             }
         })
     }
@@ -199,7 +223,7 @@ where
         if let Some((_, &priority)) = self.task_queue.get(node_id) {
             return Ok(priority);
         }
-        
+
         // Otherwise calculate a new priority
         Ok(self.calculate_priority(node_id, spec))
     }
@@ -235,7 +259,10 @@ where
     type Node = N;
     type Edge = E;
 
-    fn optimize(&self, dag: TypeSafeDag<Self::Node, Self::Edge>) -> TypeSafeDag<Self::Node, Self::Edge> {
+    fn optimize(
+        &self,
+        dag: TypeSafeDag<Self::Node, Self::Edge>,
+    ) -> TypeSafeDag<Self::Node, Self::Edge> {
         self.inner.optimize(dag)
     }
 
@@ -247,7 +274,13 @@ where
         &mut self,
         node_id: &NodeId,
         spec: &ResourceSpec,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<OwnedSemaphorePermit, SchedulerError>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<OwnedSemaphorePermit, SchedulerError>>
+                + Send
+                + '_,
+        >,
+    > {
         self.inner.schedule_task(node_id, spec)
     }
 

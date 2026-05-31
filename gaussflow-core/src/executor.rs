@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::fmt::Debug;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
-use std::fmt::Debug;
-use std::collections::HashMap;
 
 use crate::checkpoint::CheckpointStore;
 use crate::dag::{DagEdge, DagNode, TypeSafeDag};
@@ -17,29 +17,28 @@ use crate::metrics::Metrics;
 use crate::resource::ResourceManager;
 use crate::scheduler::Scheduler;
 use crate::validator::DagValidator;
-use crate::model::{NodeSpec};
 use tokio::sync::mpsc as tokio_mpsc;
 
 #[derive(Debug, Error)]
 pub enum ExecutionError {
     #[error("Node execution failed: {0}")]
     NodeExecution(String),
-    
+
     #[error("Resource allocation failed: {0}")]
     Resource(String),
-    
+
     #[error("Timeout during execution: {0}")]
     Timeout(String),
-    
+
     #[error("Retry limit exceeded: {0}")]
     RetryLimitExceeded(String),
-    
+
     #[error("Stream processing error: {0}")]
     Stream(String),
-    
+
     #[error("Batch processing error: {0}")]
     Batch(String),
-    
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -66,13 +65,13 @@ impl From<crate::dag::DagValidationError> for ExecutionError {
 pub trait NodeExecutor: Send + Sync + 'static {
     /// Returns the type of nodes this executor can handle
     fn kind(&self) -> &'static str;
-    
+
     /// Get the resource requirements for a node
     fn resource_requirements(&self, node: &dyn std::any::Any) -> crate::resource::ResourceSpec;
-    
+
     /// Returns the priority of this executor (higher is more important)
     fn priority(&self) -> u8;
-    
+
     /// Returns the maximum number of concurrent executions allowed
     fn concurrency(&self) -> usize;
 }
@@ -85,7 +84,9 @@ pub trait AsyncNodeExecutor: Send + Sync + 'static {
         node: Arc<dyn std::any::Any + Send + Sync>,
         input: &Value,
         context: &dyn std::any::Any,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, ExecutionError>> + Send + '_>>;
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Value, ExecutionError>> + Send + '_>,
+    >;
 }
 
 /// Trait for type-safe asynchronous node execution
@@ -132,7 +133,9 @@ impl AsyncNodeExecutor for DefaultNodeExecutor {
         _node: Arc<dyn std::any::Any + Send + Sync>,
         _input: &Value,
         _context: &dyn std::any::Any,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, ExecutionError>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Value, ExecutionError>> + Send + '_>,
+    > {
         Box::pin(async move {
             // Default implementation returns a null value
             Ok(Value::Null)
@@ -141,7 +144,7 @@ impl AsyncNodeExecutor for DefaultNodeExecutor {
 }
 
 #[async_trait::async_trait]
-impl<N, E> TypedAsyncNodeExecutor<N, E> for DefaultNodeExecutor 
+impl<N, E> TypedAsyncNodeExecutor<N, E> for DefaultNodeExecutor
 where
     N: DagNode + 'static,
     E: DagEdge + 'static,
@@ -157,22 +160,31 @@ where
 }
 
 /// Middleware trait
-pub trait Middleware<N, E>: Send + Sync + 'static 
+pub trait Middleware<N, E>: Send + Sync + 'static
 where
     N: DagNode + 'static,
     E: DagEdge + 'static,
 {
-    fn process_input(&self, input: Value, ctx: &dyn std::any::Any) -> Result<Value, ExecutionError>;
-    fn process_output(&self, output: Value, ctx: &dyn std::any::Any) -> Result<Value, ExecutionError>;
-    fn process_error(&self, error: ExecutionError, ctx: &dyn std::any::Any) -> Result<Value, ExecutionError>;
-    
+    fn process_input(&self, input: Value, ctx: &dyn std::any::Any)
+        -> Result<Value, ExecutionError>;
+    fn process_output(
+        &self,
+        output: Value,
+        ctx: &dyn std::any::Any,
+    ) -> Result<Value, ExecutionError>;
+    fn process_error(
+        &self,
+        error: ExecutionError,
+        ctx: &dyn std::any::Any,
+    ) -> Result<Value, ExecutionError>;
+
     // Policy hooks
     fn should_execute(&self, node: &N, ctx: &dyn std::any::Any) -> bool;
     fn modify_resources(&self, spec: &mut crate::resource::ResourceSpec, ctx: &dyn std::any::Any);
     fn modify_priority(&self, priority: &mut u8, ctx: &dyn std::any::Any);
 }
 
-pub trait PolicyHook<N, E>: Send + Sync + 'static 
+pub trait PolicyHook<N, E>: Send + Sync + 'static
 where
     N: DagNode + 'static,
     E: DagEdge + 'static,
@@ -182,7 +194,7 @@ where
     fn modify_priority(&self, priority: &mut u8, ctx: &dyn std::any::Any);
 }
 
-pub struct ExecutionContext<N, E> 
+pub struct ExecutionContext<N, E>
 where
     N: DagNode + 'static,
     E: DagEdge + 'static,
@@ -199,7 +211,7 @@ where
     pub checkpoint_store: Arc<dyn CheckpointStore>,
 }
 
-impl<N, E> ExecutionContext<N, E> 
+impl<N, E> ExecutionContext<N, E>
 where
     N: DagNode + 'static,
     E: DagEdge + 'static,
@@ -244,7 +256,7 @@ pub struct ExecutionEngine<N, E> {
     _phantom: std::marker::PhantomData<(N, E)>,
 }
 
-impl<N, E> ExecutionEngine<N, E> 
+impl<N, E> ExecutionEngine<N, E>
 where
     N: DagNode + 'static,
     E: DagEdge + 'static,
@@ -259,7 +271,7 @@ where
         validator: Arc<dyn DagValidator<Node = N, Edge = E>>,
     ) -> Self {
         let (task_queue_sender, task_queue_receiver) = tokio_mpsc::channel(100);
-        
+
         Self {
             concurrency,
             node_executor,
@@ -275,7 +287,7 @@ where
             _phantom: std::marker::PhantomData,
         }
     }
-    
+
     fn visit_node(
         &self,
         node_id: String,
@@ -287,27 +299,27 @@ where
             return Ok(());
         }
         visited.insert(node_id.clone());
-        
+
         if let Some(node) = dag.get_node(&node_id) {
             for dep in node.dependencies() {
                 self.visit_node(dep.to_string(), dag, visited, order)?;
             }
         }
-        
+
         order.push(node_id);
         Ok(())
     }
-    
+
     pub async fn execute(
         &self,
         dag: TypeSafeDag<N, E>,
-        input: Value,
+        _input: Value,
     ) -> Result<HashMap<String, Value>, ExecutionError> {
         self.validator.validate(&dag)?;
-        
+
         let order = self.determine_execution_order(&dag)?;
         let mut results: HashMap<String, Value> = HashMap::new();
-        
+
         for node_id in order {
             if let Some(node) = dag.get_node(&node_id) {
                 let mut ctx = ExecutionContext {
@@ -320,33 +332,37 @@ where
                     resource_manager: self.resource_manager.clone(),
                     scheduler: Arc::new(crate::scheduler::PriorityScheduler::new(
                         crate::scheduler::SchedulerConfig::default(),
-                        self.resource_manager.clone()
+                        self.resource_manager.clone(),
                     )),
                     metrics: self.metrics.clone(),
-                    checkpoint_store: Arc::new(crate::checkpoint::FileCheckpointStore::new("checkpoints")),
+                    checkpoint_store: Arc::new(crate::checkpoint::FileCheckpointStore::new(
+                        "checkpoints",
+                    )),
                 };
-                
+
                 let deps = node.dependencies();
                 let mut inputs = HashMap::new();
-                
+
                 for dep in deps {
                     if let Some(dep_result) = results.get(&dep) {
                         inputs.insert(dep, dep_result.clone());
                     } else {
-                        return Err(ExecutionError::NodeExecution(
-                            format!("Dependency {} not found in results", dep)
-                        ));
+                        return Err(ExecutionError::NodeExecution(format!(
+                            "Dependency {} not found in results",
+                            dep
+                        )));
                     }
                 }
-                
-                ctx.input = serde_json::to_value(inputs)
-                    .map_err(|e| ExecutionError::NodeExecution(format!("Failed to serialize inputs: {}", e)))?;
-                
+
+                ctx.input = serde_json::to_value(inputs).map_err(|e| {
+                    ExecutionError::NodeExecution(format!("Failed to serialize inputs: {}", e))
+                })?;
+
                 let result = self.execute_node(node, &ctx).await?;
                 results.insert(node_id, result);
             }
         }
-        
+
         Ok(results)
     }
 
@@ -354,18 +370,19 @@ where
         &self,
         node: &N,
         ctx: &ExecutionContext<N, E>,
-    ) -> Result<Value, ExecutionError>
-    {
+    ) -> Result<Value, ExecutionError> {
         let resource_spec = node.resource_requirements();
-        
-        let _guard = self.resource_manager
+
+        let _guard = self
+            .resource_manager
             .acquire(&resource_spec, self.task_timeout)
             .await
             .map_err(|e| ExecutionError::Resource(e.to_string()))?;
 
         let result = tokio::time::timeout(
             self.task_timeout,
-            self.node_executor.execute(Arc::new(node.clone()), &ctx.input, ctx)
+            self.node_executor
+                .execute(Arc::new(node.clone()), &ctx.input, ctx),
         )
         .await
         .map_err(|_| ExecutionError::Timeout("Node execution timed out".to_string()))??;

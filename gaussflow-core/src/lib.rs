@@ -11,16 +11,12 @@
 
 //! GaussFlow Core - The heart of the GaussFlow workflow engine
 
-#[cfg(feature = "gpu")]
-mod gpu;
-#[cfg(feature = "k8s")]
-mod k8s;
-
 pub mod checkpoint;
 pub mod dag;
 pub mod engine;
 pub mod error;
 pub mod executor;
+pub mod hash_impls;
 pub mod metrics;
 pub mod model;
 pub mod node;
@@ -28,14 +24,13 @@ pub mod policy;
 pub mod resource;
 pub mod scheduler;
 pub mod storage;
-pub mod versioning;
 pub mod validator;
-pub mod hash_impls;
+pub mod versioning;
 
 #[cfg(feature = "metrics")]
 pub mod metrics_endpoint {
-    use axum::{routing::get, Router, response::IntoResponse};
-    use prometheus::{Encoder, TextEncoder, gather};
+    use axum::{response::IntoResponse, routing::get, Router};
+    use prometheus::{gather, Encoder, TextEncoder};
     use std::net::SocketAddr;
     use tokio::task;
 
@@ -64,15 +59,15 @@ pub mod metrics_endpoint {
     }
 }
 
-use petgraph::graph::{NodeIndex, EdgeIndex};
+use petgraph::graph::{EdgeIndex, NodeIndex};
+use std::sync::Once;
 use thiserror::Error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use std::sync::Once;
 
 static INIT: Once = Once::new();
 
 /// Initialize observability (tracing + metrics) for GaussFlow
-pub fn init_observability(service_name: &str) {
+pub fn init_observability(_service_name: &str) {
     INIT.call_once(|| {
         tracing_subscriber::registry()
             .with(tracing_subscriber::EnvFilter::from_default_env())
@@ -88,27 +83,29 @@ pub fn prometheus_metrics() -> String {
 
 // Re-export commonly used types from submodules
 pub use crate::checkpoint::{CheckpointManager, CheckpointStore, FileCheckpointStore};
-pub use crate::dag::{DagNode, DagEdge, DagValidationError};
-pub use crate::engine::{ExecutionEngine, ExecutionError as EngineError, TaskQueue, TaskQueueReceiver};
-pub use crate::error::{GaussFlowError, ResourceError, ExecutionError as ErrorExecutionError, PolicyError};
-pub use crate::executor::{NodeExecutor as ExecutorNodeExecutor, Middleware, PolicyHook};
+pub use crate::dag::{DagEdge, DagNode, DagValidationError};
+pub use crate::engine::{
+    ExecutionEngine, ExecutionError as EngineError, TaskQueue, TaskQueueReceiver,
+};
+pub use crate::error::{
+    ExecutionError as ErrorExecutionError, GaussFlowError, PolicyError, ResourceError,
+};
+pub use crate::executor::{Middleware, NodeExecutor as ExecutorNodeExecutor, PolicyHook};
 pub use crate::metrics::Metrics;
-pub use crate::model::{WorkflowSpec, NodeSpec, EdgeSpec, WorkflowSettings, NodeType};
+pub use crate::model::{EdgeSpec, NodeSpec, NodeType, WorkflowSettings, WorkflowSpec};
 pub use crate::node::{
-    NodeType as NodeNodeType, 
-    NodeSpec as NodeNodeSpec,
+    AuditPolicy, MonitoringPolicy, NodeSpec as NodeNodeSpec, NodeType as NodeNodeType,
     SecurityPolicy,
-    MonitoringPolicy,
-    AuditPolicy
 };
 pub use crate::policy::Policy;
-pub use crate::resource::{ResourceSpec, ResourceManager, ResourceUsage};
-pub use crate::scheduler::{Scheduler, PriorityScheduler, SchedulerConfig};
+pub use crate::resource::{ResourceManager, ResourceSpec, ResourceUsage};
+pub use crate::scheduler::{PriorityScheduler, Scheduler, SchedulerConfig};
 pub use crate::validator::{DagValidator, DefaultDagValidator};
 pub use crate::versioning::{VersionManager, VersionedWorkflow, VersioningError};
 
 // Re-export TypeSafeDag with proper generic parameters
-pub type TypeSafeDag<N = crate::model::NodeSpec, E = crate::model::EdgeSpec> = crate::dag::TypeSafeDag<N, E>;
+pub type TypeSafeDag<N = crate::model::NodeSpec, E = crate::model::EdgeSpec> =
+    crate::dag::TypeSafeDag<N, E>;
 
 /// A type alias for TypeSafeDag with default node and edge types
 pub type TypeSafeDagDefault = TypeSafeDag<crate::model::NodeSpec, crate::model::EdgeSpec>;
@@ -136,8 +133,6 @@ pub enum DagError {
     #[error("Failed to parse workflow JSON: {0}")]
     Serde(#[from] serde_json::Error),
 
-    #[error("Node '{0}' timed out")] 
+    #[error("Node '{0}' timed out")]
     Timeout(String),
 }
-
-
