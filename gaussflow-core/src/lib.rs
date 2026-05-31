@@ -74,10 +74,9 @@ pub fn init_observability(_service_name: &str) {
     });
 }
 
-/// Expose Prometheus metrics as a string
-pub fn prometheus_metrics() -> String {
-    "Metrics not available".to_string()
-}
+// NOTE: metrics live in the runtime (`gaussflow_runtime::prometheus_metrics`), which is where
+// execution happens. The former core-side `prometheus_metrics()` stub ("Metrics not available")
+// was a dead duplicate and has been removed (Phase 4).
 
 // Re-export commonly used types from submodules.
 // NOTE: the canonical workflow data model is `crate::model` (`NodeSpec`/`NodeType`/...). The

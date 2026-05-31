@@ -121,7 +121,8 @@ capability stands today, evaluated against the product vision above.
 | Retry with backoff (fixed/linear/exp) | ✅ **Working** | Per-node retry policy applied by the executor |
 | Run persistence (SurrealDB) | 🟡 **Partial** | Env-sourced creds; opt-in backend behind the `RunStore` trait |
 | CLI (validate / run / serve / config) | 🟡 **Partial** | `validate` + DB-free `run` work; `serve`/`config` wiring incomplete |
-| Web dashboard + REST/WebSocket API | 🟡 **Partial** | API surface exists; execution path is *simulated* |
+| Web dashboard + REST/WebSocket API | ✅ **Working** | Executes on the **real engine** (simulation removed); streams real per-node/completion events over WebSocket |
+| Metrics & observability | ✅ **Working** | Real run/node counters → Prometheus exposition (`prometheus_metrics()` + web `/metrics/prometheus`); run/node tracing correlation IDs |
 | Python bindings (PyO3) | 🟡 **Partial** | `validate` + async `execute` exposed |
 | Terminal UI (TUI) | 🟡 **Partial** | Monitoring UI scaffold |
 | Anthropic / Ollama providers, streaming | 🔴 **Planned** | `LlmProvider` abstraction is in place (OpenAI + mock); more backends + token streaming are enhancements |
@@ -139,11 +140,12 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 > ensemble fan-in). The **flagship synthesis layer** (`gaussflow-synth`, **Phase S ✅**) compiles a
 > prompt into a validated, runnable graph end-to-end — confirm/edit/estimate, multi-provider
 > planning (OpenAI/Anthropic/Ollama), and versioned/immutable deploy with provenance,
-> required-secrets, quotas, triggers, and run trace-back. **Phase 3 ✅** adds durability:
-> checkpoint + resume (crash recovery, idempotent, failure-injection tested) and a durable
-> content-addressed artifact store. Next: observability (Phase 4), security/multi-tenancy
-> (Phase 5), and scale-out incl. bounded-concurrent execution + backpressure (Phase 6). The
-> roadmap is sequenced exactly that way.
+> required-secrets, quotas, triggers, and run trace-back. **Phase 3 ✅** adds durability
+> (checkpoint + resume, durable content-addressed store). **Phase 4 ✅** adds observability: real
+> Prometheus metrics fed by the executor, the web dashboard wired to the **real engine** (no more
+> simulation) streaming live run events, and run/node tracing correlation IDs. Next:
+> security/multi-tenancy (Phase 5) and scale-out incl. bounded-concurrent execution + backpressure
+> (Phase 6). The roadmap is sequenced exactly that way.
 
 ---
 

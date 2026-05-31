@@ -268,20 +268,28 @@ vault/cloud secret-manager backend, and a richer interactive edit UI.
 
 ---
 
-## Phase 4 — Observability & operability (Weeks 12–15, overlaps P3) 🔭
+## Phase 4 — Observability & operability (Weeks 12–15, overlaps P3) 🔭 — in progress
 
 *Objective: you can see and debug what the engine is doing in production.*
 
-- [ ] **Real metrics.** Replace `prometheus_metrics() -> "Metrics not available"` with a true
-      Prometheus exporter; remove the dual stubs. Standardize on the `metrics` feature.
-- [ ] **Structured tracing** with OpenTelemetry export; one trace per run, one span per node.
-- [ ] **Health/readiness endpoints** wired to real engine state in `gaussflow-web`.
-- [ ] **Wire the web dashboard to the real engine.** Remove `simulate_execution`; stream actual
-      run events over WebSocket.
-- [ ] **Structured logs** with run/node correlation IDs.
+- [x] **Real metrics.** ✅ `gaussflow-runtime/src/metrics.rs`: a real registry the executor feeds
+      (runs started/completed/failed; node counts by type+outcome; node-execution-time summary).
+      `prometheus_metrics()` now renders the **Prometheus text exposition** from live counters; the
+      core-side duplicate stub was removed. Unit + integration tested.
+- [x] **Wire the web dashboard to the real engine.** ✅ `gaussflow-web` no longer simulates:
+      `simulate_execution` is replaced by `run_execution`, which executes the workflow on
+      `gaussflow_runtime::execute` and streams real per-node + completion/failure events over the
+      WebSocket. A `/metrics/prometheus` endpoint exposes the runtime exposition.
+- [x] **Structured logs with run/node correlation IDs.** ✅ Each node executes inside a tracing
+      span carrying `run` + `node` ids, so logs correlate to their run and node.
+- [→] **Structured tracing with OpenTelemetry export** — partial: spans exist (one per node, run
+      span context via ids); wiring an OTLP exporter needs a collector (deployment concern, Phase 7).
+- [ ] **Health/readiness endpoints** wired to real engine state in `gaussflow-web` (a `/health`
+      route exists; make `/ready` reflect real readiness).
 
-**Exit criteria:** a Grafana dashboard shows real run/node metrics; the web UI reflects real
-executions.
+**Exit criteria:** ✅ the web UI reflects **real** executions (no more simulation) and real run/node
+metrics are exported in Prometheus format. **Remaining:** an OTLP exporter + a packaged Grafana
+dashboard (both deployment/infra, deferred to release engineering).
 
 ---
 

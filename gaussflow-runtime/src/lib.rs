@@ -13,6 +13,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
 pub mod checkpoint;
+pub mod metrics;
 pub mod provider;
 pub mod store;
 pub use checkpoint::{
@@ -32,9 +33,10 @@ pub fn init_observability(_service_name: &str) {
     });
 }
 
-/// Expose Prometheus metrics as a string
+/// Expose the runtime metrics in Prometheus text-exposition format (what a `/metrics` endpoint
+/// scrapes). Reflects real run/node counters updated by the executor.
 pub fn prometheus_metrics() -> String {
-    "Metrics not available".to_string()
+    metrics::global().render_prometheus()
 }
 
 #[cfg(feature = "metrics")]
@@ -245,6 +247,7 @@ async fn execute_core(
     if !resuming {
         store.start_run(&run_id, &input).await?;
         outputs.insert("input".to_string(), input);
+        metrics::global().record_run_started();
     }
 
     let cpu_sem = Arc::new(Semaphore::new(
@@ -313,7 +316,10 @@ async fn execute_core(
             (active, handler::NodeInput { merged, sources })
         };
 
+        let node_type_name = node_type_name(&n.node_type);
+
         if !is_active {
+            metrics::global().record_node(&node_type_name, metrics::NodeOutcome::Skipped, 0);
             outputs.insert(node_id.clone(), json!({ "skipped": true }));
             save_checkpoint(
                 checkpoints,
@@ -338,8 +344,16 @@ async fn execute_core(
         };
 
         let n_ref = n.clone();
+        let run_id_for_span = run_id.clone();
+        let node_start = std::time::Instant::now();
         let task = tokio::spawn(async move {
-            let span = tracing::span!(tracing::Level::INFO, "node_execute", node = %n_ref.id);
+            // One span per node, tagged with the run id for run/node log correlation.
+            let span = tracing::span!(
+                tracing::Level::INFO,
+                "node_execute",
+                run = %run_id_for_span,
+                node = %n_ref.id,
+            );
             let _enter = span.enter();
             let _permit = permit_sem.acquire().await.unwrap();
             let mut attempt = 0u32;
@@ -395,6 +409,12 @@ async fn execute_core(
         let node_output = match task.await {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => {
+                metrics::global().record_node(
+                    &node_type_name,
+                    metrics::NodeOutcome::Failed,
+                    node_start.elapsed().as_millis() as u64,
+                );
+                metrics::global().record_run_failed();
                 let _ = store.fail_run(&run_id, &e.to_string()).await;
                 let _ = save_checkpoint(
                     checkpoints,
@@ -408,6 +428,12 @@ async fn execute_core(
                 return Err(e);
             }
             Err(join_err) => {
+                metrics::global().record_node(
+                    &node_type_name,
+                    metrics::NodeOutcome::Failed,
+                    node_start.elapsed().as_millis() as u64,
+                );
+                metrics::global().record_run_failed();
                 let _ = store.fail_run(&run_id, &join_err.to_string()).await;
                 let _ = save_checkpoint(
                     checkpoints,
@@ -421,6 +447,11 @@ async fn execute_core(
                 return Err(Box::new(join_err));
             }
         };
+        metrics::global().record_node(
+            &node_type_name,
+            metrics::NodeOutcome::Executed,
+            node_start.elapsed().as_millis() as u64,
+        );
         outputs.insert(node_id.clone(), node_output);
         last_node_id = Some(node_id);
         save_checkpoint(
@@ -443,6 +474,7 @@ async fn execute_core(
         .unwrap_or_default();
 
     store.finish_run(&run_id, &final_output).await?;
+    metrics::global().record_run_completed();
     save_checkpoint(
         checkpoints,
         &run_id,
@@ -483,6 +515,14 @@ async fn save_checkpoint(
         error,
     };
     checkpoints.save(run_id, &cp).await
+}
+
+/// The metric/label name for a node type (its snake_case serde name, e.g. `llm_call`).
+fn node_type_name(node_type: &gaussflow_core::model::NodeType) -> String {
+    serde_json::to_value(node_type)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Decide whether a graph edge is "taken", given its `on` label and the source node's output.

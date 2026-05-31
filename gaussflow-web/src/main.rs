@@ -436,6 +436,7 @@ fn create_router(state: AppState) -> Router {
         // System endpoints
         .route("/health", get(health_check))
         .route("/metrics", get(get_metrics))
+        .route("/metrics/prometheus", get(prometheus_metrics_handler))
         .route("/stats", get(get_stats));
 
     // Create static file service with fallback
@@ -978,13 +979,13 @@ async fn execute_workflow(
         execution_id, workflow.name
     );
 
-    // Spawn background task to simulate execution
+    // Spawn background task to run the workflow on the real engine.
     let exec_state = state.clone();
     let exec_id = execution_id.clone();
     let spec = workflow.spec.clone();
 
     tokio::spawn(async move {
-        simulate_execution(exec_state, exec_id, spec).await;
+        run_execution(exec_state, exec_id, spec).await;
     });
 
     (
@@ -1315,6 +1316,17 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     }))
 }
 
+/// Prometheus text-exposition endpoint, serving the runtime's real run/node metrics.
+async fn prometheus_metrics_handler() -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        gaussflow_runtime::prometheus_metrics(),
+    )
+}
+
 async fn get_metrics(State(state): State<AppState>) -> impl IntoResponse {
     let active_executions = state
         .executions
@@ -1504,140 +1516,93 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
 // Background Tasks
 // ============================================================================
 
-async fn simulate_execution(state: AppState, execution_id: String, spec: serde_json::Value) {
-    // Parse the spec to get nodes
-    let nodes: Vec<String> = spec
-        .get("nodes")
-        .and_then(|n| n.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|n| n.get("id").and_then(|id| id.as_str()).map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+/// Run a workflow on the real GaussFlow engine and reflect progress into the execution record
+/// and the WebSocket event stream. Replaces the former `simulate_execution`.
+async fn run_execution(state: AppState, execution_id: String, spec: serde_json::Value) {
+    use gaussflow_core::TypeSafeDag;
 
-    let total_nodes = nodes.len().max(1);
+    // Parse + execute on the canonical engine (in-memory run store; no database required).
+    let spec_json = spec.to_string();
+    let result = match TypeSafeDag::from_json(&spec_json) {
+        Ok(dag) => gaussflow_runtime::execute(dag, serde_json::json!({})).await,
+        Err(e) => Err(Box::<dyn std::error::Error + Send + Sync>::from(
+            e.to_string(),
+        )),
+    };
 
-    for (i, node_id) in nodes.iter().enumerate() {
-        // Check if execution was cancelled or paused
-        if let Some(exec) = state.executions.get(&execution_id) {
-            match exec.status {
-                ExecutionStatus::Cancelled => {
-                    info!("Execution {} was cancelled", execution_id);
-                    return;
+    match result {
+        Ok(run) => {
+            let empty = serde_json::Map::new();
+            let outputs = run
+                .get("outputs")
+                .and_then(|o| o.as_object())
+                .unwrap_or(&empty);
+            let total = outputs
+                .iter()
+                .filter(|(k, _)| k.as_str() != "input")
+                .count()
+                .max(1);
+
+            let mut done = 0usize;
+            for (node_id, output) in outputs.iter() {
+                if node_id == "input" {
+                    continue;
                 }
-                ExecutionStatus::Paused => {
-                    // Wait until resumed or cancelled
-                    drop(exec);
-                    loop {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        if let Some(exec) = state.executions.get(&execution_id) {
-                            match exec.status {
-                                ExecutionStatus::Running => break,
-                                ExecutionStatus::Cancelled => return,
-                                _ => continue,
-                            }
-                        }
-                    }
+                done += 1;
+                if let Some(mut exec) = state.executions.get_mut(&execution_id) {
+                    exec.completed_nodes.push(node_id.clone());
+                    exec.node_outputs.insert(node_id.clone(), output.clone());
+                    exec.progress = (done as f32 / total as f32) * 100.0;
                 }
-                _ => {}
+                let _ = state.event_tx.send(ServerEvent::ExecutionNodeCompleted {
+                    execution_id: execution_id.clone(),
+                    node_id: node_id.clone(),
+                    output: output.clone(),
+                });
+            }
+
+            if let Some(mut exec) = state.executions.get_mut(&execution_id) {
+                let now = Utc::now();
+                exec.status = ExecutionStatus::Completed;
+                exec.finished_at = Some(now);
+                exec.progress = 100.0;
+                exec.current_node = None;
+                exec.duration_ms = Some((now - exec.started_at).num_milliseconds() as u64);
+                exec.output = run.get("output").cloned();
+                exec.logs.push(LogEntry {
+                    timestamp: now,
+                    level: LogLevel::Info,
+                    message: "Execution completed".to_string(),
+                    node_id: None,
+                    metadata: None,
+                });
+                info!("Execution {} completed", execution_id);
+                let _ = state.event_tx.send(ServerEvent::ExecutionCompleted {
+                    execution: exec.clone(),
+                });
             }
         }
-
-        // Update current node
-        if let Some(mut exec) = state.executions.get_mut(&execution_id) {
-            exec.current_node = Some(node_id.clone());
-            exec.progress = ((i as f32 + 0.5) / total_nodes as f32) * 100.0;
-            exec.logs.push(LogEntry {
-                timestamp: Utc::now(),
-                level: LogLevel::Info,
-                message: format!("Executing node: {}", node_id),
-                node_id: Some(node_id.clone()),
-                metadata: None,
-            });
-        }
-
-        // Broadcast progress
-        let _ = state.event_tx.send(ServerEvent::ExecutionProgress {
-            execution_id: execution_id.clone(),
-            progress: ((i as f32 + 0.5) / total_nodes as f32) * 100.0,
-            current_node: Some(node_id.clone()),
-        });
-
-        // Simulate node execution time with proper random
-        let exec_time = 500 + (fast_random() % 1000);
-        tokio::time::sleep(Duration::from_millis(exec_time)).await;
-
-        // Mark node as completed
-        let output = serde_json::json!({
-            "node_id": node_id,
-            "result": "success",
-            "data": {
-                "processed": true,
-                "timestamp": Utc::now().to_rfc3339(),
-                "execution_time_ms": exec_time
+        Err(e) => {
+            if let Some(mut exec) = state.executions.get_mut(&execution_id) {
+                let now = Utc::now();
+                exec.status = ExecutionStatus::Failed;
+                exec.finished_at = Some(now);
+                exec.current_node = None;
+                exec.duration_ms = Some((now - exec.started_at).num_milliseconds() as u64);
+                exec.error = Some(e.to_string());
+                exec.logs.push(LogEntry {
+                    timestamp: now,
+                    level: LogLevel::Error,
+                    message: format!("Execution failed: {e}"),
+                    node_id: None,
+                    metadata: None,
+                });
+                tracing::error!("Execution {} failed: {e}", execution_id);
+                let _ = state.event_tx.send(ServerEvent::ExecutionFailed {
+                    execution: exec.clone(),
+                });
             }
-        });
-
-        if let Some(mut exec) = state.executions.get_mut(&execution_id) {
-            exec.completed_nodes.push(node_id.clone());
-            exec.node_outputs.insert(node_id.clone(), output.clone());
-            exec.progress = ((i + 1) as f32 / total_nodes as f32) * 100.0;
-            exec.logs.push(LogEntry {
-                timestamp: Utc::now(),
-                level: LogLevel::Info,
-                message: format!("Node '{}' completed successfully", node_id),
-                node_id: Some(node_id.clone()),
-                metadata: Some(serde_json::json!({"execution_time_ms": exec_time})),
-            });
         }
-
-        let _ = state.event_tx.send(ServerEvent::ExecutionNodeCompleted {
-            execution_id: execution_id.clone(),
-            node_id: node_id.clone(),
-            output,
-        });
-
-        // Broadcast log entry
-        let _ = state.event_tx.send(ServerEvent::LogEntry {
-            execution_id: execution_id.clone(),
-            log: LogEntry {
-                timestamp: Utc::now(),
-                level: LogLevel::Info,
-                message: format!("Node '{}' completed", node_id),
-                node_id: Some(node_id.clone()),
-                metadata: None,
-            },
-        });
-    }
-
-    // Mark execution as completed
-    if let Some(mut exec) = state.executions.get_mut(&execution_id) {
-        let now = Utc::now();
-        exec.status = ExecutionStatus::Completed;
-        exec.finished_at = Some(now);
-        exec.progress = 100.0;
-        exec.current_node = None;
-        let duration = (now - exec.started_at).num_milliseconds() as u64;
-        exec.duration_ms = Some(duration);
-        exec.output = Some(serde_json::json!({
-            "success": true,
-            "nodes_executed": exec.completed_nodes.len(),
-            "duration_ms": duration
-        }));
-        exec.logs.push(LogEntry {
-            timestamp: now,
-            level: LogLevel::Info,
-            message: format!("Execution completed successfully in {}ms", duration),
-            node_id: None,
-            metadata: None,
-        });
-
-        info!("Execution {} completed successfully", execution_id);
-
-        let _ = state.event_tx.send(ServerEvent::ExecutionCompleted {
-            execution: exec.clone(),
-        });
     }
 }
 
