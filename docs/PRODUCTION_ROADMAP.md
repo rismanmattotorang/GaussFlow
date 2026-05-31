@@ -2,11 +2,25 @@
 
 **Owner:** Gaussian Technologies
 **Goal:** Take GaussFlow from its current **Alpha / Technology Preview** state to a credible,
-secure, well-documented **1.0 production release**.
-**Companion document:** [`CODE_EVALUATION.md`](CODE_EVALUATION.md)
+secure, well-documented **1.0 production release** that delivers the product vision:
+**prompt → DAG → confirm → deploy → run.**
+**Companion documents:** [`CODE_EVALUATION.md`](CODE_EVALUATION.md) ·
+[`SYNTHESIS_PIPELINE.md`](SYNTHESIS_PIPELINE.md)
 
 This plan is deliberately ordered by *risk reduction and trust*, not by feature breadth. The
-guiding principle: **make the core narrow path correct, secure, and honest before widening it.**
+guiding principle: **make the core narrow path correct, secure, and honest before widening it —
+then build the prompt-to-DAG synthesis layer on top of a runtime we trust.**
+
+### The north star (and why it comes last in sequence, first in priority)
+
+The single capability that defines GaussFlow — synthesizing a DAG from a natural-language prompt
+(**Phase S** below) — is the **highest-priority outcome** but is deliberately **sequenced after** core
+consolidation and real node types. A compiler is only as trustworthy as the target it emits to:
+the synthesis layer can only safely generate node types the runtime actually executes (Phase 2),
+and it needs *one* correct, dependency-respecting engine (Phase 1) — not the three divergent
+execution paths that exist today. Building synthesis on the current foundation would amount to
+generating graphs that mostly do not run. So we earn the right to ship the front door by first
+making the rooms behind it real.
 
 ---
 
@@ -81,6 +95,45 @@ executes a multi-node DAG correctly with no database required.
 
 **Exit criteria:** every node type in `NodeType` either has a real implementation or is removed
 from the public enum and docs.
+
+---
+
+## Phase S — The synthesis layer: prompt → DAG → confirm → deploy → run (Weeks 9–16) 🧠 the product
+
+*Objective: deliver GaussFlow's defining capability — turn a natural-language prompt into a
+validated, runnable agent graph that the user confirms before it ships. Full design in
+[`SYNTHESIS_PIPELINE.md`](SYNTHESIS_PIPELINE.md). This phase overlaps Phases 2–4: it can begin as
+soon as a trustworthy subset of node types and a single engine exist, and matures alongside them.*
+
+This is the highest-value phase. Everything before it exists to make this phase safe to ship.
+
+- [ ] **New `gaussflow-synth` crate.** Houses intake, the Plan IR, lowering, and the repair loop.
+      Keep it cleanly separated from `core`/`runtime`.
+- [ ] **Prompt intake → `SynthesisRequest`.** Capture the goal plus constraints (cost, latency,
+      allowed tools, schedule, data scope) as explicit, enforceable guards.
+- [ ] **Intent extraction → Plan IR.** LLM with structured output produces an abstract capability
+      graph, *not* raw `WorkflowSpec`. Drive generation from a **capability catalog derived from
+      actually-registered runtime handlers** — never from the `NodeType` enum (no inventing stubs).
+- [ ] **Lowering: Plan IR → `WorkflowSpec`.** Map capabilities to concrete nodes, wire edges from
+      data dependencies, assign resources/retry, and select models by cost/quality policy.
+- [ ] **Validation gate + bounded self-repair.** Every synthesized spec must pass
+      `TypeSafeDag::from_json`; on failure, feed validator errors back for ≤ N repair iterations,
+      then fail loudly. Restrict emitted node types to those with real handlers (gates on Phase 2).
+- [ ] **Confirmation UX (human-in-the-loop).** Render the proposed DAG (graph + JSON), show a
+      per-node plain-language explanation with provenance to the prompt, and an estimated
+      cost/latency/side-effect summary. Support edit / regenerate-with-feedback / confirm. Editing
+      re-validates. **Nothing deploys without explicit confirmation.**
+- [ ] **Deploy step.** Persist the confirmed, versioned, immutable spec; resolve providers and
+      secrets from the secrets manager; reserve quotas; register triggers; emit a deployment handle.
+- [ ] **Run + trace-back.** Execute on the canonical runtime; link every run to its originating
+      prompt for auditability.
+- [ ] **Synthesis benchmark suite.** A prompt corpus with expected capabilities; track
+      first-pass validation rate, repair iterations, and run-success rate as regression gates.
+
+**Exit criteria:** a natural-language prompt produces a `WorkflowSpec` that passes validation
+unmodified ≥ 90% of the time (with bounded repair), uses only runtime-supported node types, can be
+reviewed/edited/confirmed, and — once confirmed — deploys reproducibly and runs end-to-end with
+real outputs. (See the acceptance criteria in [`SYNTHESIS_PIPELINE.md`](SYNTHESIS_PIPELINE.md).)
 
 ---
 
@@ -183,6 +236,8 @@ GaussFlow 1.0 ships when:
 5. The web UI and API reflect real executions with real metrics and auth.
 6. CI gates build, lint, test, coverage, and security audit.
 7. The README's status table is **all ✅** for everything it lists — or the row is removed.
+8. **A natural-language prompt synthesizes a validated DAG that the user confirms, deploys, and
+   runs end-to-end** — i.e. the product vision works, not just the runtime.
 
 ---
 
@@ -193,13 +248,15 @@ GaussFlow 1.0 ships when:
 | 0 | 1 week | Trust & safety |
 | 1 | 3 weeks | Consolidate core |
 | 2 | 5 weeks | Real node types |
+| **S** | **7 weeks** | **Synthesis layer — the product** (overlaps 2–4) |
 | 3 | 4 weeks | State & reliability |
 | 4 | 4 weeks | Observability |
 | 5 | 4 weeks | Security |
 | 6 | 7 weeks | Scale-out |
 | 7 | 5 weeks | Release engineering |
 
-Phases 3–4 and 6–7 overlap. **Estimated calendar time to a defensible 1.0: ~6 months** with a
-small focused team (2–4 engineers), front-loading Phases 0–2 which deliver the most credibility
-per week of effort.
+Phases S, 3–4 and 6–7 overlap. **Estimated calendar time to a defensible 1.0: ~6–7 months** with
+a small focused team (2–4 engineers), front-loading Phases 0–2 (credibility per week) and then
+Phase S (the capability that makes the product the product). Phase S can start mid-Phase-2 once a
+trustworthy node subset and a single engine exist.
 </content>

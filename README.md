@@ -2,7 +2,7 @@
 
 # GaussFlow™
 
-### The orchestration engine for multi-LLM and agentic AI workflows
+### Prompt-to-production AI workflows. No canvas. No glue code.
 
 **A product by [Gaussian Technologies](#about-gaussian-technologies)**
 
@@ -11,58 +11,102 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](#license)
 [![Crates](https://img.shields.io/badge/workspace-6%20crates-informational)]()
 
-*Define your AI pipeline as a graph. Let GaussFlow run it — fast, safe, and observable.*
+*Describe the outcome you want. GaussFlow compiles it into an executable agent graph,
+shows you the plan, and — on your confirmation — deploys and runs it.*
 
 </div>
 
 ---
 
 > **⚠️ Project status: Technology Preview (Alpha).**
-> GaussFlow is under active development. The core graph model, workflow parser, and a
-> single-machine execution runtime work today. Many advanced capabilities described in our
-> vision (distributed execution, full enterprise governance, persistent graph storage) are
-> **partially implemented or planned**. For an honest, file-level breakdown of what is real
-> versus aspirational, read the **[Code Evaluation](docs/CODE_EVALUATION.md)**. For the path
-> to a 1.0 production release, see the **[Production Roadmap](docs/PRODUCTION_ROADMAP.md)**.
+> GaussFlow's execution substrate — the typed DAG model, workflow parser, and a single-machine
+> Rust runtime — works today. The flagship **prompt-to-DAG synthesis layer** that defines the
+> product vision is **not yet implemented**; it is the #1 item on our roadmap. For an honest,
+> file-level breakdown of what is real versus aspirational, read the
+> **[Code Evaluation](docs/CODE_EVALUATION.md)**. For the architecture of the synthesis layer,
+> see the **[Synthesis Pipeline](docs/SYNTHESIS_PIPELINE.md)**. For the path to 1.0, see the
+> **[Production Roadmap](docs/PRODUCTION_ROADMAP.md)**.
 
 ---
 
-## Why GaussFlow
+## The idea
 
-Modern AI products are no longer a single model call. They are *pipelines*: retrieve, route to
-the cheapest capable model, run several agents in parallel, aggregate, validate, retry on
-failure, and checkpoint along the way. Stitching this together with Python glue scripts is
-fragile, slow, and hard to observe.
+Tools like n8n and Flowise made agentic workflows *buildable* — but you still have to **build
+them**: drag nodes onto a canvas, wire edges by hand, configure each step. That is a designer's
+job, and it does not scale to the speed at which teams now want to ship AI features.
 
-GaussFlow models the whole pipeline as a **typed Directed Acyclic Graph (DAG)** and executes it
-with a Rust core built for concurrency and correctness:
+GaussFlow removes the canvas. You state a goal in natural language:
 
-- **Describe, don't script.** Author workflows as JSON (compatible with n8n-style exports) or
-  via the Rust/Python API. The engine handles scheduling, dependencies, and data flow.
-- **Rust core, predictable performance.** Async execution on Tokio, semaphore-based resource
-  control, and zero-GC latency.
-- **Built for LLMs and agents.** First-class node types for LLM calls, agents, ensembles,
-  routers, and nested subgraphs.
-- **Observable by design.** Structured tracing, execution metrics, and run persistence so you
-  can see exactly what happened.
+> *"Every morning, pull our top 20 support tickets, cluster them by theme, draft a summary for
+> each cluster with the cheapest model that's good enough, and post the digest to Slack."*
+
+GaussFlow **synthesizes** that into a typed, validated agent graph — choosing node types
+(LLM calls, agents, routers, ensembles), wiring dependencies, and assigning resources. It shows
+you the plan as a DAG you can inspect and edit. When you **confirm**, it deploys the graph and
+runs it on a Rust execution core built for concurrency and correctness.
+
+**Prompt → DAG → Confirm → Deploy → Run.** That is the entire product.
+
+---
+
+## How it works
+
+```
+   ┌────────────┐   ┌──────────────┐   ┌─────────────┐   ┌───────────┐   ┌──────────┐
+   │  1. Prompt │ → │ 2. Synthesize│ → │ 3. Confirm  │ → │ 4. Deploy │ → │ 5. Run   │
+   │  natural   │   │  LLM compiler│   │  human-in-  │   │  register │   │  Rust    │
+   │  language  │   │  → typed DAG │   │  the-loop   │   │  + alloc  │   │  runtime │
+   │  goal      │   │  + validate  │   │  review/edit│   │  resources│   │  execute │
+   └────────────┘   └──────────────┘   └─────────────┘   └───────────┘   └──────────┘
+         │                  │                  │                │              │
+     "what you want"   intent → spec      you stay in       runnable      observable
+                       (passes the        control;          artifact      execution with
+                       same validator     edit before                     metrics + logs
+                       a hand-authored    it ships
+                       graph would)
+```
+
+The key engineering bet: **synthesis is a compiler front-end whose back-end already exists.**
+The natural-language layer must emit a `WorkflowSpec` that passes the *same* type/cycle
+validation (`gaussflow-core`) and runs on the *same* executor (`gaussflow-runtime`) that a
+hand-authored graph would. Generation is creative; the validated DAG is the contract.
+
+See **[docs/SYNTHESIS_PIPELINE.md](docs/SYNTHESIS_PIPELINE.md)** for the full design.
+
+---
+
+## Why a Rust core
+
+The synthesis layer is the *interface*; the runtime is the *guarantee*. Once a graph is
+confirmed, it has to run predictably under concurrent load — which is why the execution core is
+Rust, not Python glue:
+
+- **Typed DAG.** Workflows are a validated `petgraph` DAG with cycle detection — not a free-form
+  script. If the graph is invalid, it never deploys.
+- **Async execution on Tokio.** Topological scheduling, per-node timeouts, retry with backoff.
+- **Resource-aware.** Semaphore-based CPU/GPU concurrency control with RAII guards.
+- **Observable by design.** Structured tracing and run persistence so you can see exactly what
+  each node did.
 
 ---
 
 ## Feature status at a glance
 
-We believe an engineering tool should tell you the truth about its own maturity. Here is where
-each capability stands today.
+An engineering tool should tell you the truth about its own maturity. Here is where each
+capability stands today, evaluated against the product vision above.
 
 | Capability | Status | Notes |
 |---|---|---|
-| Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core`, cycle/validation checks |
-| Topological single-machine execution | ✅ **Working** | `gaussflow-runtime`, Tokio-based |
+| **Prompt → DAG synthesis (the compiler)** | 🔴 **Planned — flagship** | The defining feature. No NL→graph code exists yet; design in [SYNTHESIS_PIPELINE.md](docs/SYNTHESIS_PIPELINE.md) |
+| **Confirm → Deploy → Run lifecycle** | 🔴 **Planned** | No confirmation/registration/deploy step exists yet |
+| Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core`, cycle/validation checks (the synthesis *target*) |
+| Topological single-machine execution | ✅ **Working** | `gaussflow-runtime`, Tokio-based (the synthesis *back-end*) |
 | LLM node (OpenAI Chat Completions) | ✅ **Working** | Reads `OPENAI_API_KEY` from env |
 | Resource control (CPU/GPU semaphores) | ✅ **Working** | Concurrency limits, per-node timeouts |
 | Retry with backoff (fixed/linear/exp) | ✅ **Working** | Per-node retry policy |
 | Run persistence (SurrealDB) | 🟡 **Partial** | Hardcoded creds; needs config + graceful fallback |
 | CLI (validate / run / serve / config) | 🟡 **Partial** | Command scaffold present, wiring incomplete |
-| Web dashboard + REST/WebSocket API | 🟡 **Partial** | API surface exists; execution path is simulated |
+| Web dashboard + REST/WebSocket API | 🟡 **Partial** | API surface exists; execution path is *simulated* |
 | Python bindings (PyO3) | 🟡 **Partial** | `validate` + async `execute` exposed |
 | Terminal UI (TUI) | 🟡 **Partial** | Monitoring UI scaffold |
 | Agent / ensemble / router node logic | 🔴 **Planned** | Currently echo/passthrough stubs |
@@ -73,32 +117,41 @@ each capability stands today.
 
 Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 
+> **The honest summary:** GaussFlow today is a credible *execution substrate* with the *front
+> door* — the prompt-to-DAG compiler — not yet built. The substrate is the hard, valuable part
+> to get right, and it largely works. The roadmap is sequenced to build the synthesis layer on
+> top of a runtime we trust.
+
 ---
 
 ## Architecture
 
-GaussFlow is a Cargo workspace of focused crates:
+GaussFlow is a Cargo workspace of focused crates. The synthesis layer (planned) sits *above*
+the runtime and emits the same `WorkflowSpec` the runtime already executes:
 
 ```
-                         ┌─────────────────────────────────────────────┐
-                         │                Interfaces                    │
-                         │  gaussflow-cli   gaussflow-web   gaussflow-tui│
-                         │  gaussflow-py (Python bindings, PyO3)         │
-                         └───────────────────────┬─────────────────────┘
-                                                 │
-                         ┌───────────────────────▼─────────────────────┐
-                         │             gaussflow-runtime                │
-                         │  Topological executor · node handlers ·      │
-                         │  retry/backoff · resource semaphores ·       │
-                         │  run persistence                             │
-                         └───────────────────────┬─────────────────────┘
-                                                 │
-                         ┌───────────────────────▼─────────────────────┐
-                         │              gaussflow-core                  │
-                         │  TypeSafeDag (petgraph) · WorkflowSpec model │
-                         │  validator · scheduler · resource manager ·  │
-                         │  checkpoint/versioning/storage traits        │
-                         └─────────────────────────────────────────────┘
+            ┌───────────────────────────────────────────────────────────┐
+            │   Synthesis layer  (PLANNED — the product's front door)     │
+            │   prompt → intent → DAG synthesis → validate → confirm      │
+            └───────────────────────────────┬───────────────────────────┘
+                                            │  emits a validated WorkflowSpec
+            ┌───────────────────────────────▼───────────────────────────┐
+            │                       Interfaces                            │
+            │   gaussflow-cli   gaussflow-web   gaussflow-tui             │
+            │   gaussflow-py (Python bindings, PyO3)                       │
+            └───────────────────────────────┬───────────────────────────┘
+                                            │
+            ┌───────────────────────────────▼───────────────────────────┐
+            │                     gaussflow-runtime                       │
+            │   Topological executor · node handlers · retry/backoff ·    │
+            │   resource semaphores · run persistence                     │
+            └───────────────────────────────┬───────────────────────────┘
+                                            │
+            ┌───────────────────────────────▼───────────────────────────┐
+            │                      gaussflow-core                         │
+            │   TypeSafeDag (petgraph) · WorkflowSpec model · validator · │
+            │   scheduler · resource manager · checkpoint/storage traits  │
+            └─────────────────────────────────────────────────────────────┘
 ```
 
 | Crate | Role | Read more |
@@ -114,6 +167,10 @@ GaussFlow is a Cargo workspace of focused crates:
 
 ## Quick start
 
+> **Note:** until the synthesis layer lands, you author the `WorkflowSpec` directly — i.e. you
+> hand-write the artifact the compiler will eventually produce. This is the runtime that the
+> prompt-to-DAG layer is being built on top of.
+
 ### Prerequisites
 - Rust 1.75+ and Cargo
 - (Optional) An `OPENAI_API_KEY` for live LLM nodes
@@ -127,7 +184,7 @@ cd gaussflow
 cargo build --workspace
 ```
 
-### Define a workflow
+### Define a workflow (today: the synthesis *output* format)
 
 `workflow.json`:
 
@@ -178,15 +235,17 @@ async def main():
 asyncio.run(main())
 ```
 
-> **Known limitation:** today the runtime persists runs to a SurrealDB instance using
-> hardcoded credentials and returns a `run_id` rather than the full node outputs. This is one
-> of the first items on the [Production Roadmap](docs/PRODUCTION_ROADMAP.md).
+> **Known limitations (tracked on the roadmap):** the runtime persists runs to SurrealDB using
+> hardcoded credentials and returns a `run_id` rather than full node outputs; and there is no
+> prompt-to-DAG step yet — you supply the `WorkflowSpec` the compiler will one day generate.
 
 ---
 
-## Workflow specification
+## The workflow specification (the synthesis target)
 
-A workflow is `name`, a list of `nodes`, a list of `connections` (edges), and `settings`:
+Whether written by a human or generated by the synthesis layer, a workflow is `name`, a list of
+`nodes`, a list of `connections` (edges), and `settings`. This schema is the **contract**
+between the prompt-to-DAG compiler and the runtime:
 
 ```jsonc
 {
@@ -208,17 +267,15 @@ A workflow is `name`, a list of `nodes`, a list of `connections` (edges), and `s
   "connections": [
     { "from": "router", "to": "draft", "on": "success" }
   ],
-  "settings": {
-    "concurrency": 8,
-    "fail_fast": false,
-    "resume": true
-  }
+  "settings": { "concurrency": 8, "fail_fast": false, "resume": true }
 }
 ```
 
 Supported node types in the core model: `llm_call`, `agent`, `ensemble`, `router`, `subgraph`,
 `data_processor`, `conditional`, `parallel`. Only `llm_call` has a full implementation today;
-the others currently behave as passthrough handlers (see the status table above).
+the others currently behave as passthrough handlers (see the status table above). The synthesis
+layer can only safely emit node types that the runtime actually executes — which is why
+"make the node types real" precedes "ship the compiler" on the roadmap.
 
 ---
 
@@ -240,6 +297,8 @@ the [Production Roadmap](docs/PRODUCTION_ROADMAP.md).
 
 ## Documentation
 
+- 🧠 **[Synthesis Pipeline](docs/SYNTHESIS_PIPELINE.md)** — architecture of the flagship
+  prompt → DAG → confirm → deploy → run layer.
 - 📋 **[Code Evaluation](docs/CODE_EVALUATION.md)** — honest engineering assessment of the
   current codebase: what works, what's a stub, and the risks.
 - 🗺️ **[Production Roadmap](docs/PRODUCTION_ROADMAP.md)** — the phased plan to take GaussFlow
@@ -250,14 +309,15 @@ the [Production Roadmap](docs/PRODUCTION_ROADMAP.md).
 
 ## About Gaussian Technologies
 
-**Gaussian Technologies** is a deep-tech startup building the infrastructure layer for
+**Gaussian Technologies** is a deep-tech company building the infrastructure layer for
 production AI. We believe the next decade of software will be defined not by single models, but
-by *systems* of models, agents, and tools working together — and that those systems deserve an
-execution substrate that is fast, type-safe, observable, and honest about its guarantees.
+by *systems* of models, agents, and tools working together — and that the people who need those
+systems should not have to become workflow engineers to build them.
 
-GaussFlow is our flagship open engine for orchestrating those systems. Named for Carl Friedrich
-Gauss — and for the distributions at the heart of modern machine learning — it reflects our
-engineering values: rigor, precision, and elegant foundations.
+GaussFlow is our flagship engine for turning intent into running systems: you describe the
+outcome, we compile, verify, and execute the graph. Named for Carl Friedrich Gauss — and for the
+distributions at the heart of modern machine learning — it reflects our engineering values:
+rigor, precision, and elegant foundations.
 
 > *Orchestrate intelligence.*
 

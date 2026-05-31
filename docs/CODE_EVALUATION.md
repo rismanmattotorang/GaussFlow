@@ -2,9 +2,11 @@
 
 **Prepared for:** Gaussian Technologies engineering & leadership
 **Date:** 2026-05-31
-**Scope:** Full workspace review of the `GaussFlow` repository (commit `f26f09b`, branch `claude/trusting-fermat-PhY8p`)
-**Method:** Static reading of all crates and source files. The workspace was *not* compiled or
-test-run as part of this evaluation; findings are based on source inspection.
+**Scope:** Full workspace review of the `GaussFlow` repository, evaluated against the stated
+product vision (**prompt → DAG → confirm → deploy → run**).
+**Method:** Static reading of all crates and source files, plus targeted verification of key
+findings (hardcoded secrets, `todo!()`/`unimplemented!()` sites, simulated execution path, and
+the absence of any natural-language-to-graph code) by direct search.
 
 ---
 
@@ -24,9 +26,17 @@ that claim. Large portions of the advertised feature set are stubs, placeholders
 **Overall maturity rating: Alpha / Technology Preview.** It is a promising prototype that needs
 a focused hardening effort (and a documentation reset) before it can be called production-grade.
 
+> **Most important finding, measured against the product goal:** the capability that *defines*
+> GaussFlow — turning a natural-language **prompt into a DAG**, letting the user **confirm** it,
+> then **deploying** and **running** it — **does not exist in the codebase at all.** What exists
+> is the *execution substrate* the synthesis layer would sit on top of. See §1.5.
+
 ### Top risks
+0. **The flagship capability is unbuilt.** There is no prompt-to-DAG synthesis, no confirmation
+   step, and no deploy/register step. Without it, GaussFlow is a workflow *runtime*, not the
+   "describe it and ship it" product it is positioned as. This is the strategic gap. (§1.5)
 1. **Hardcoded secrets in source** — a SurrealDB password (`REDACTED`) and a default JWT secret
-   (`REDACTED`) are committed. Security and credential-hygiene issue.
+   (`REDACTED`) are committed. Security and credential-hygiene issue. *(Verified.)*
 2. **Documentation/reality gap** — claiming production readiness erodes trust and will burn
    early adopters. This is the single most important thing to fix.
 3. **Duplicate, divergent core models** — two different `NodeSpec`/`NodeType` definitions and
@@ -35,6 +45,36 @@ a focused hardening effort (and a documentation reset) before it can be called p
    path that ignores DAG dependency ordering and another with a node-id/index mismatch.
 5. **Most node types are non-functional** — agent, ensemble, router, subgraph, etc. are
    echo/passthrough stubs.
+
+---
+
+## 1.5 Assessment against the product vision (prompt → DAG → confirm → deploy → run)
+
+GaussFlow's differentiator versus n8n / Flowise is explicit: **you do not design the workflow —
+you prompt, and GaussFlow translates it into a DAG; once you confirm, it deploys and runs.**
+Evaluated against *that* goal, here is the state of each stage of the intended pipeline:
+
+| Pipeline stage | Exists in code? | Evidence |
+|---|---|---|
+| **1. Prompt intake** (NL goal in) | ❌ No | No NL ingestion path; the only entry points take a `WorkflowSpec`/JSON. |
+| **2. Synthesize** (NL → DAG via LLM) | ❌ No | Searches for `synthesi*`, `translate`, `generate_dag`, `from_prompt`, "natural language" return **zero** matches in `*.rs`. The single `LlmCallHandler` calls OpenAI to execute a *node*, not to author a *graph*. |
+| **3. Confirm** (human-in-the-loop review/edit) | ❌ No | No proposed-plan rendering, diff, or approval gate anywhere. |
+| **4. Deploy** (register/allocate a confirmed graph) | ❌ No | `deployment_name` is a config string field only; there is no deploy/registration logic. |
+| **5. Run** (execute the graph) | 🟡 Partial | A correct topological executor exists in `gaussflow-runtime/src/lib.rs`, but it is coupled to SurrealDB and returns only a `run_id`, not node outputs. |
+
+**Net:** four of the five stages that constitute the product are absent; the fifth is the part
+that is actually built. This is not a criticism of the engineering done so far — building a
+trustworthy execution substrate first is the right order — but the documentation (and the prior
+README) described GaussFlow as a JSON/visual workflow tool, which is *neither* the current
+reality *nor* the product vision. The corrected README and the new
+[`SYNTHESIS_PIPELINE.md`](SYNTHESIS_PIPELINE.md) realign the docs with the actual goal.
+
+**Why the foundation is well-shaped for the vision anyway.** The synthesis layer is best
+understood as a *compiler front-end* whose back-end target is the existing `WorkflowSpec` model,
+whose type-checker is the existing `TypeSafeDag` validator, and whose runtime is the existing
+executor. So the work already done is the *back half* of the pipeline. The missing front half
+(crate `gaussflow-synth`, proposed) is additive, not a rewrite — provided the core is first
+consolidated to one model and one engine (see §4).
 
 ---
 
@@ -208,12 +248,17 @@ and complete. This redundancy must be consolidated.
 
 ## 8. Verdict
 
-GaussFlow is a **strong Alpha-stage prototype with good bones and an honesty problem in its
-docs.** The fastest way to increase its credibility is not to write more code first — it is to
-**align the documentation with reality** (done in this PR's README rewrite) and then execute the
-hardening plan in [`PRODUCTION_ROADMAP.md`](PRODUCTION_ROADMAP.md).
+GaussFlow is a **strong Alpha-stage execution substrate whose flagship capability — the
+prompt-to-DAG synthesis layer — is not yet built**, wrapped in docs that (until this change)
+both overstated maturity *and* mis-described the product. Two things must happen, in order:
+
+1. **Align the docs with reality and with the vision** (done here: prompt-first README,
+   [`SYNTHESIS_PIPELINE.md`](SYNTHESIS_PIPELINE.md), and this §1.5).
+2. **Consolidate and harden the substrate, then build the synthesis front-end on top of it**
+   (the phased plan in [`PRODUCTION_ROADMAP.md`](PRODUCTION_ROADMAP.md)).
 
 The engineering foundation is good enough that reaching a credible 1.0 is realistic with a
-focused effort, provided the team resists the temptation to keep adding breadth before the core
-execution path, security, and a single source of truth for the data model are solid.
+focused effort — but only if the team resists adding breadth (more node stubs, more backends)
+before there is **one** correct execution path, secure defaults, a single source of truth for
+the data model, *and* the synthesis layer that makes GaussFlow GaussFlow.
 </content>
