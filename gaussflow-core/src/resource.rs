@@ -55,7 +55,7 @@ impl Default for ResourceSpec {
             labels: HashMap::new(),
             remote: false,
             required_executor: None,
-            memory_mb: 1024,    // 1GB
+            memory_mb: 1024,      // 1GB
             cpu_millicores: 1000, // 1 core
             retry_attempts: 3,
             retry_delay_ms: 1000, // 1 second
@@ -79,7 +79,7 @@ impl Default for ResourceManager {
         let cpu_pool = Arc::new(Semaphore::new(resource_limits.cpu_cores as usize));
         let gpu_pool = Arc::new(Semaphore::new(resource_limits.gpu_count as usize));
         let memory_pool = Arc::new(Semaphore::new(1));
-        
+
         Self {
             cpu_pool,
             gpu_pool,
@@ -150,7 +150,7 @@ impl Drop for ResourceGuard {
             // Release resources when the guard is dropped
             let manager = self.manager.clone();
             let node_id = self.node_id.clone();
-            
+
             // Use a blocking task to release resources
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async move {
@@ -163,15 +163,20 @@ impl Drop for ResourceGuard {
 
 impl ResourceManager {
     /// Allocates resources for a node
-    pub async fn allocate(&self, node_id: &str, spec: &ResourceSpec) -> Result<ResourceGuard, ResourceError> {
-        self.acquire_with_timeout(node_id, spec, std::time::Duration::from_secs(30)).await
+    pub async fn allocate(
+        &self,
+        node_id: &str,
+        spec: &ResourceSpec,
+    ) -> Result<ResourceGuard, ResourceError> {
+        self.acquire_with_timeout(node_id, spec, std::time::Duration::from_secs(30))
+            .await
     }
 
     pub fn new(resource_limits: ResourceSpec) -> Arc<Self> {
         let cpu_pool = Arc::new(Semaphore::new(resource_limits.cpu_cores as usize));
         let gpu_pool = Arc::new(Semaphore::new(resource_limits.gpu_count as usize));
         let memory_pool = Arc::new(Semaphore::new(1)); // Memory is handled differently
-        
+
         Arc::new(Self {
             cpu_pool,
             gpu_pool,
@@ -200,7 +205,7 @@ impl ResourceManager {
         let allocation = tokio::time::timeout(timeout, self.acquire_resources(node_id, spec))
             .await
             .map_err(|_| ResourceError::AcquisitionTimeout)??;
-        
+
         Ok(ResourceGuard {
             manager: Arc::new(self.clone()),
             node_id: node_id.to_string(),
@@ -219,10 +224,16 @@ impl ResourceManager {
     }
 
     /// Allocates resources based on the given spec
-    pub async fn allocate_resources(&self, node_id: &str, spec: &ResourceSpec) -> Result<ResourceAllocation, ResourceError> {
+    pub async fn allocate_resources(
+        &self,
+        node_id: &str,
+        spec: &ResourceSpec,
+    ) -> Result<ResourceAllocation, ResourceError> {
         // Check if we have enough resources
         if spec.cpu_cores > self.resource_limits.cpu_cores {
-            return Err(ResourceError::InsufficientResources("CPU cores".to_string()));
+            return Err(ResourceError::InsufficientResources(
+                "CPU cores".to_string(),
+            ));
         }
         if spec.memory_mb > self.resource_limits.memory_mb {
             return Err(ResourceError::InsufficientResources("memory".to_string()));
@@ -236,7 +247,11 @@ impl ResourceManager {
             let permits = spec.cpu_cores as usize;
             let mut permits_vec = Vec::with_capacity(permits);
             for _ in 0..permits {
-                let permit = self.cpu_pool.clone().acquire_owned().await
+                let permit = self
+                    .cpu_pool
+                    .clone()
+                    .acquire_owned()
+                    .await
                     .map_err(|_| ResourceError::InsufficientResources("CPU".to_string()))?;
                 permits_vec.push(permit);
             }
@@ -249,7 +264,11 @@ impl ResourceManager {
         let gpu_permits = if spec.gpu_count > 0 {
             let mut permits_vec = Vec::with_capacity(spec.gpu_count as usize);
             for _ in 0..spec.gpu_count {
-                let permit = self.gpu_pool.clone().acquire_owned().await
+                let permit = self
+                    .gpu_pool
+                    .clone()
+                    .acquire_owned()
+                    .await
                     .map_err(|_| ResourceError::InsufficientResources("GPU".to_string()))?;
                 permits_vec.push(permit);
             }
@@ -263,7 +282,11 @@ impl ResourceManager {
             let permits = spec.memory_mb as usize;
             let mut permits_vec = Vec::with_capacity(permits);
             for _ in 0..permits {
-                let permit = self.memory_pool.clone().acquire_owned().await
+                let permit = self
+                    .memory_pool
+                    .clone()
+                    .acquire_owned()
+                    .await
                     .map_err(|_| ResourceError::InsufficientResources("memory".to_string()))?;
                 permits_vec.push(permit);
             }
@@ -282,7 +305,8 @@ impl ResourceManager {
         );
 
         // Store the allocation
-        self.active_allocations.insert(node_id.to_string(), allocation.clone());
+        self.active_allocations
+            .insert(node_id.to_string(), allocation.clone());
 
         Ok(allocation)
     }
@@ -323,13 +347,13 @@ pub struct ResourceUsage {
 pub enum ResourceError {
     #[error("Insufficient resources: {0}")]
     InsufficientResources(String),
-    
+
     #[error("Resource acquisition timed out")]
     AcquisitionTimeout,
-    
+
     #[error("Resource allocation timeout")]
     Timeout,
-    
+
     #[error("Resource validation failed: {0}")]
     Validation(String),
 }

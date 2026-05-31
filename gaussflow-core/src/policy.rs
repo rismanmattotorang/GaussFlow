@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use thiserror::Error;
 
 // Re-export types that are used in the public API
@@ -8,27 +8,22 @@ pub use crate::model::WorkflowSpec;
 pub use crate::resource::ResourceUsage;
 
 /// Log level for audit logging
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LogLevel {
     Trace,
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        LogLevel::Info
-    }
 }
 
 /// Configuration for exporting audit logs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportConfig {
     pub enabled: bool,
-    pub format: String,  // e.g., "json", "csv"
-    pub destination: String,  // e.g., "file:///path", "http://endpoint"
+    pub format: String,      // e.g., "json", "csv"
+    pub destination: String, // e.g., "file:///path", "http://endpoint"
     pub batch_size: usize,
     pub batch_timeout_secs: u64,
 }
@@ -83,6 +78,12 @@ pub struct PolicyEngine {
     audit_trail: AuditTrail,
 }
 
+impl Default for PolicyEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PolicyEngine {
     pub fn new() -> Self {
         Self {
@@ -135,9 +136,16 @@ pub trait PolicyEnforcer: Send + Sync {
 }
 
 /// Audit trail for policy events
+#[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
 pub struct AuditTrail {
     events: Vec<PolicyEvent>,
     config: AuditConfig,
+}
+
+impl Default for AuditTrail {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AuditTrail {
@@ -160,11 +168,28 @@ impl AuditTrail {
 /// Policy event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PolicyEvent {
-    ValidationPassed { policy: String, timestamp: u64 },
-    ValidationFailed { policy: String, error: String, timestamp: u64 },
-    EnforcementPassed { policy: String, timestamp: u64 },
-    EnforcementFailed { policy: String, error: String, timestamp: u64 },
-    AuditRecorded { event: String, timestamp: u64 },
+    ValidationPassed {
+        policy: String,
+        timestamp: u64,
+    },
+    ValidationFailed {
+        policy: String,
+        error: String,
+        timestamp: u64,
+    },
+    EnforcementPassed {
+        policy: String,
+        timestamp: u64,
+    },
+    EnforcementFailed {
+        policy: String,
+        error: String,
+        timestamp: u64,
+    },
+    AuditRecorded {
+        event: String,
+        timestamp: u64,
+    },
 }
 
 /// Policy validation context
@@ -219,16 +244,16 @@ pub struct AuthorizationContext {
 pub enum PolicyError {
     #[error("Policy validation failed: {0}")]
     Validation(String),
-    
+
     #[error("Policy enforcement failed: {0}")]
     Enforcement(String),
-    
+
     #[error("Policy configuration error: {0}")]
     Configuration(String),
-    
+
     #[error("Policy execution error: {0}")]
     Execution(String),
-    
+
     #[error("Policy audit error: {0}")]
     Audit(String),
 }

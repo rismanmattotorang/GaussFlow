@@ -2033,7 +2033,7 @@ dependencies = [
 
 [[package]]
 name = "gaussflow-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "atty",
@@ -2050,6 +2050,8 @@ dependencies = [
  "flate2",
  "gaussflow-core",
  "gaussflow-runtime",
+ "gaussflow-security",
+ "gaussflow-synth",
  "glob",
  "hyper 1.6.0",
  "indexmap 2.9.0",
@@ -2086,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "gaussflow-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "ahash 0.8.12",
  "anyhow",
@@ -2146,7 +2148,7 @@ dependencies = [
 
 [[package]]
 name = "gaussflow-py"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "gaussflow-core",
@@ -2159,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "gaussflow-runtime"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2172,7 +2174,6 @@ dependencies = [
  "num_cpus",
  "opentelemetry 0.21.0",
  "opentelemetry-otlp",
- "opentelemetry-prometheus",
  "petgraph",
  "pprof",
  "priority-queue",
@@ -2197,14 +2198,39 @@ dependencies = [
  "tokio-test",
  "tokio-util 0.7.15",
  "tracing",
- "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
 ]
 
 [[package]]
+name = "gaussflow-security"
+version = "0.1.0"
+dependencies = [
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "gaussflow-synth"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "gaussflow-core",
+ "gaussflow-runtime",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "gaussflow-tui"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "better-panic",
@@ -2234,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "gaussflow-web"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "askama",
@@ -2249,6 +2275,7 @@ dependencies = [
  "futures-util",
  "gaussflow-core",
  "gaussflow-runtime",
+ "gaussflow-security",
  "parking_lot",
  "reqwest",
  "serde",

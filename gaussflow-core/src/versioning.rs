@@ -10,19 +10,19 @@ use thiserror::Error;
 pub struct VersionedWorkflow {
     /// The workflow ID
     pub id: String,
-    
+
     /// The workflow version
     pub version: String,
-    
+
     /// The workflow content
     pub content: serde_json::Value,
-    
+
     /// Metadata about the version
     pub metadata: HashMap<String, String>,
-    
+
     /// When this version was created (ISO 8601 timestamp)
     pub created_at: String,
-    
+
     /// Who created this version
     pub created_by: Option<String>,
 }
@@ -32,16 +32,16 @@ pub struct VersionedWorkflow {
 pub enum VersioningError {
     #[error("Invalid version format: {0}")]
     InvalidVersion(String),
-    
+
     #[error("Version conflict: {0}")]
     VersionConflict(String),
-    
+
     #[error("Version not found: {0}")]
     VersionNotFound(String),
-    
+
     #[error(transparent)]
     SemverError(#[from] semver::Error),
-    
+
     #[error(transparent)]
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -51,16 +51,20 @@ pub enum VersioningError {
 pub trait VersionManager: Send + Sync {
     /// Saves a new version of a workflow
     async fn save_version(&self, workflow: &VersionedWorkflow) -> Result<(), VersioningError>;
-    
+
     /// Gets a specific version of a workflow
-    async fn get_version(&self, id: &str, version: &str) -> Result<VersionedWorkflow, VersioningError>;
-    
+    async fn get_version(
+        &self,
+        id: &str,
+        version: &str,
+    ) -> Result<VersionedWorkflow, VersioningError>;
+
     /// Lists all versions of a workflow
     async fn list_versions(&self, id: &str) -> Result<Vec<VersionedWorkflow>, VersioningError>;
-    
+
     /// Deletes a specific version of a workflow
     async fn delete_version(&self, id: &str, version: &str) -> Result<(), VersioningError>;
-    
+
     /// Gets the latest version of a workflow that matches the version requirement
     async fn get_latest_matching_version(
         &self,
@@ -69,9 +73,9 @@ pub trait VersionManager: Send + Sync {
     ) -> Result<VersionedWorkflow, VersioningError> {
         let versions = self.list_versions(id).await?;
         let req = VersionReq::parse(version_req)?;
-        
+
         let mut latest: Option<VersionedWorkflow> = None;
-        
+
         for version in versions {
             if let Ok(ver) = Version::parse(&version.version) {
                 if req.matches(&ver) {
@@ -87,7 +91,7 @@ pub trait VersionManager: Send + Sync {
                 }
             }
         }
-        
+
         latest.ok_or_else(|| VersioningError::VersionNotFound(version_req.to_string()))
     }
 }
@@ -110,7 +114,7 @@ impl InMemoryVersionManager {
 impl VersionManager for InMemoryVersionManager {
     async fn save_version(&self, workflow: &VersionedWorkflow) -> Result<(), VersioningError> {
         let mut versions = self.versions.entry(workflow.id.clone()).or_default();
-        
+
         // Check for duplicate version
         if versions.iter().any(|v| v.version == workflow.version) {
             return Err(VersioningError::VersionConflict(format!(
@@ -118,28 +122,26 @@ impl VersionManager for InMemoryVersionManager {
                 workflow.version, workflow.id
             )));
         }
-        
+
         versions.push(workflow.clone());
         Ok(())
     }
-    
-    async fn get_version(&self, id: &str, version: &str) -> Result<VersionedWorkflow, VersioningError> {
+
+    async fn get_version(
+        &self,
+        id: &str,
+        version: &str,
+    ) -> Result<VersionedWorkflow, VersioningError> {
         self.versions
             .get(id)
-            .and_then(|versions| {
-                versions.iter().find(|v| v.version == version).cloned()
-            })
+            .and_then(|versions| versions.iter().find(|v| v.version == version).cloned())
             .ok_or_else(|| VersioningError::VersionNotFound(version.to_string()))
     }
-    
+
     async fn list_versions(&self, id: &str) -> Result<Vec<VersionedWorkflow>, VersioningError> {
-        Ok(self
-            .versions
-            .get(id)
-            .map(|v| v.clone())
-            .unwrap_or_default())
+        Ok(self.versions.get(id).map(|v| v.clone()).unwrap_or_default())
     }
-    
+
     async fn delete_version(&self, id: &str, version: &str) -> Result<(), VersioningError> {
         if let Some(mut versions) = self.versions.get_mut(id) {
             versions.retain(|v| v.version != version);
@@ -161,7 +163,7 @@ impl Default for InMemoryVersionManager {
 mod tests {
     use super::*;
     use chrono::Utc;
-    
+
     fn create_test_workflow(id: &str, version: &str) -> VersionedWorkflow {
         VersionedWorkflow {
             id: id.to_string(),
@@ -172,37 +174,37 @@ mod tests {
             created_by: Some("test".to_string()),
         }
     }
-    
+
     #[tokio::test]
     async fn test_version_manager() {
         let manager = InMemoryVersionManager::new();
         let workflow = create_test_workflow("test", "1.0.0");
-        
+
         // Test saving a version
         manager.save_version(&workflow).await.unwrap();
-        
+
         // Test getting a version
         let retrieved = manager.get_version("test", "1.0.0").await.unwrap();
         assert_eq!(retrieved.version, "1.0.0");
-        
+
         // Test duplicate version
         let result = manager.save_version(&workflow).await;
         assert!(matches!(result, Err(VersioningError::VersionConflict(_))));
-        
+
         // Test listing versions
         let versions = manager.list_versions("test").await.unwrap();
         assert_eq!(versions.len(), 1);
-        
+
         // Test getting latest matching version
         let workflow2 = create_test_workflow("test", "2.0.0");
         manager.save_version(&workflow2).await.unwrap();
-        
+
         let latest = manager
-            .get_latest_matching_version("test", ">=1.0.0 <3.0.0")
+            .get_latest_matching_version("test", ">=1.0.0, <3.0.0")
             .await
             .unwrap();
         assert_eq!(latest.version, "2.0.0");
-        
+
         // Test deleting a version
         manager.delete_version("test", "1.0.0").await.unwrap();
         let versions = manager.list_versions("test").await.unwrap();

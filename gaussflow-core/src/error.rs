@@ -1,11 +1,11 @@
-use thiserror::Error;
-use std::fmt;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
+use std::fmt;
 use std::time::{Duration, SystemTime};
+use thiserror::Error;
 
 /// Comprehensive error type for all GaussFlow operations
-/// 
+///
 /// This error type provides:
 /// - Detailed error categorization
 /// - Context preservation with structured metadata
@@ -319,7 +319,10 @@ impl GaussFlowError {
             Self::Configuration { .. } => ErrorSeverity::Error,
             Self::Authentication { .. } => ErrorSeverity::Error,
             Self::Authorization { .. } => ErrorSeverity::Error,
-            Self::Policy { severity, .. } => severity.as_ref().map(|s| (*s).into()).unwrap_or(ErrorSeverity::Error),
+            Self::Policy { severity, .. } => severity
+                .as_ref()
+                .map(|s| (*s).into())
+                .unwrap_or(ErrorSeverity::Error),
             Self::NodeExecution { .. } => ErrorSeverity::Error,
             Self::Stream { .. } => ErrorSeverity::Error,
             Self::Batch { .. } => ErrorSeverity::Error,
@@ -355,23 +358,57 @@ impl GaussFlowError {
     /// Get the recovery strategy
     pub fn recovery_strategy(&self) -> Option<&RecoveryStrategy> {
         match self {
-            Self::DagValidation { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Execution { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Resource { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Checkpoint { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Versioning { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Storage { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Serialization { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Configuration { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Authentication { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Authorization { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Policy { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::NodeExecution { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Stream { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Batch { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Timeout { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Cancelled { recovery_strategy, .. } => recovery_strategy.as_ref(),
-            Self::Internal { recovery_strategy, .. } => recovery_strategy.as_ref(),
+            Self::DagValidation {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Execution {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Resource {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Checkpoint {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Versioning {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Storage {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Serialization {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Configuration {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Authentication {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Authorization {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Policy {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::NodeExecution {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Stream {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Batch {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Timeout {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Cancelled {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
+            Self::Internal {
+                recovery_strategy, ..
+            } => recovery_strategy.as_ref(),
         }
     }
 
@@ -470,7 +507,7 @@ pub enum DagError {
         #[serde(skip_serializing_if = "Option::is_none")]
         cycle_path: Option<Vec<String>>,
     },
-    
+
     #[error("Node validation failed: {message}")]
     NodeValidation {
         message: String,
@@ -479,7 +516,7 @@ pub enum DagError {
         #[serde(skip_serializing_if = "Option::is_none")]
         details: Option<HashMap<String, String>>,
     },
-    
+
     #[error("Edge validation failed: {message}")]
     EdgeValidation {
         message: String,
@@ -490,14 +527,14 @@ pub enum DagError {
         #[serde(skip_serializing_if = "Option::is_none")]
         details: Option<HashMap<String, String>>,
     },
-    
+
     #[error("Missing dependencies for node {node_id}")]
     MissingDependencies {
         node_id: String,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         missing_deps: Vec<String>,
     },
-    
+
     #[error("Invalid edge condition: {message}")]
     InvalidEdgeCondition {
         message: String,
@@ -519,16 +556,16 @@ pub enum ResourceError {
         #[serde(skip_serializing_if = "Option::is_none")]
         available: Option<String>,
     },
-    
+
     #[error("Resource allocation timeout")]
     AcquisitionTimeout {
         #[serde(skip_serializing_if = "Option::is_none")]
         timeout_duration: Option<Duration>,
     },
-    
+
     #[error("Resource allocation timeout")]
     Timeout,
-    
+
     #[error("Resource validation failed: {message}")]
     Validation {
         message: String,
@@ -548,21 +585,21 @@ pub enum ExecutionError {
         #[serde(skip_serializing_if = "Option::is_none")]
         attempt: Option<u32>,
     },
-    
+
     #[error("Resource allocation failed: {message}")]
     Resource {
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         resource_type: Option<String>,
     },
-    
+
     #[error("Timeout during execution: {message}")]
     Timeout {
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         duration: Option<Duration>,
     },
-    
+
     #[error("Retry limit exceeded: {message}")]
     RetryLimitExceeded {
         message: String,
@@ -571,14 +608,14 @@ pub enum ExecutionError {
         #[serde(skip_serializing_if = "Option::is_none")]
         attempts: Option<u32>,
     },
-    
+
     #[error("Stream processing error: {message}")]
     Stream {
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         stream_id: Option<String>,
     },
-    
+
     #[error("Batch processing error: {message}")]
     Batch {
         message: String,
@@ -596,14 +633,14 @@ pub enum PolicyError {
         #[serde(skip_serializing_if = "Option::is_none")]
         policy_id: Option<String>,
     },
-    
+
     #[error("Policy enforcement failed: {message}")]
     Enforcement {
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         policy_id: Option<String>,
     },
-    
+
     #[error("Policy configuration error: {message}")]
     Configuration {
         message: String,
@@ -714,21 +751,33 @@ impl From<DagError> for GaussFlowError {
                 }),
                 recovery_strategy: Some(RecoveryStrategy::Manual),
             },
-            DagError::NodeValidation { message, node_id, details } => Self::DagValidation {
+            DagError::NodeValidation {
+                message,
+                node_id,
+                details,
+            } => Self::DagValidation {
                 message,
                 node_id,
                 edge_id: None,
                 details,
                 recovery_strategy: Some(RecoveryStrategy::Manual),
             },
-            DagError::EdgeValidation { message, from_node, to_node, details } => Self::DagValidation {
+            DagError::EdgeValidation {
+                message,
+                from_node,
+                to_node,
+                details,
+            } => Self::DagValidation {
                 message,
                 node_id: from_node,
                 edge_id: to_node,
                 details,
                 recovery_strategy: Some(RecoveryStrategy::Manual),
             },
-            DagError::MissingDependencies { node_id, missing_deps } => Self::DagValidation {
+            DagError::MissingDependencies {
+                node_id,
+                missing_deps,
+            } => Self::DagValidation {
                 message: format!("Missing dependencies for node {}", node_id),
                 node_id: Some(node_id),
                 edge_id: None,
@@ -753,14 +802,21 @@ impl From<DagError> for GaussFlowError {
 impl From<ResourceError> for GaussFlowError {
     fn from(err: ResourceError) -> Self {
         match err {
-            ResourceError::InsufficientResources { message, resource_type, requested, available } => Self::Resource {
+            ResourceError::InsufficientResources {
+                message,
+                resource_type,
+                requested,
+                available,
+            } => Self::Resource {
                 message,
                 resource_type,
                 requested,
                 available,
                 recovery_strategy: Some(RecoveryStrategy::WaitAndRetry),
             },
-            ResourceError::AcquisitionTimeout { timeout_duration: _ } => Self::Resource {
+            ResourceError::AcquisitionTimeout {
+                timeout_duration: _,
+            } => Self::Resource {
                 message: "Resource acquisition timeout".to_string(),
                 resource_type: None,
                 requested: None,
@@ -774,7 +830,10 @@ impl From<ResourceError> for GaussFlowError {
                 available: None,
                 recovery_strategy: Some(RecoveryStrategy::WaitAndRetry),
             },
-            ResourceError::Validation { message, resource_spec } => Self::Resource {
+            ResourceError::Validation {
+                message,
+                resource_spec,
+            } => Self::Resource {
                 message,
                 resource_type: None,
                 requested: resource_spec,
@@ -788,7 +847,11 @@ impl From<ResourceError> for GaussFlowError {
 impl From<ExecutionError> for GaussFlowError {
     fn from(err: ExecutionError) -> Self {
         match err {
-            ExecutionError::NodeExecution { message, node_id, attempt } => Self::NodeExecution {
+            ExecutionError::NodeExecution {
+                message,
+                node_id,
+                attempt,
+            } => Self::NodeExecution {
                 message,
                 node_id,
                 node_type: None,
@@ -796,7 +859,10 @@ impl From<ExecutionError> for GaussFlowError {
                 duration: None,
                 recovery_strategy: Some(RecoveryStrategy::Retry),
             },
-            ExecutionError::Resource { message, resource_type } => Self::Resource {
+            ExecutionError::Resource {
+                message,
+                resource_type,
+            } => Self::Resource {
                 message,
                 resource_type,
                 requested: None,
@@ -809,7 +875,11 @@ impl From<ExecutionError> for GaussFlowError {
                 operation: None,
                 recovery_strategy: Some(RecoveryStrategy::Retry),
             },
-            ExecutionError::RetryLimitExceeded { message, max_retries: _, attempts } => Self::Execution {
+            ExecutionError::RetryLimitExceeded {
+                message,
+                max_retries: _,
+                attempts,
+            } => Self::Execution {
                 message,
                 node_id: None,
                 workflow_id: None,

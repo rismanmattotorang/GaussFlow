@@ -1,13 +1,13 @@
 use gaussflow_core::ResourceSpec;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Semaphore, OwnedSemaphorePermit};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::timeout;
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use dashmap::DashMap;
 use tracing::{info, warn};
 
 /// Tracks available resources and manages task scheduling
@@ -110,7 +110,7 @@ impl Planner {
     pub fn new(concurrency: Option<usize>) -> Self {
         let cpu = concurrency.unwrap_or_else(num_cpus::get);
         let metrics = Arc::new(ResourceMetrics::default());
-        
+
         let planner = Self {
             cpu_sem: Arc::new(Semaphore::new(cpu)),
             gpu_sem: Arc::new(Semaphore::new(1)), // Single GPU by default
@@ -127,7 +127,6 @@ impl Planner {
 
         planner
     }
-
 
     /// Add a remote executor configuration
     pub fn add_remote_executor(&self, id: String, config: RemoteExecutorConfig) {
@@ -161,6 +160,7 @@ impl Planner {
     }
 
     /// Get the best available remote executor for a node
+    #[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
     fn get_best_executor(&self, spec: &ResourceSpec) -> Option<(String, RemoteExecutorConfig)> {
         // If a specific executor is required, return it
         if let Some(executor_id) = &spec.required_executor {
@@ -197,28 +197,34 @@ impl Planner {
         // Calculate timeout, defaulting to 30 seconds if not specified
         let timeout_duration = Duration::from_millis(spec.timeout_ms);
 
-        info!("Acquiring {:?} resources for node {}", resource_type, node_id);
+        info!(
+            "Acquiring {:?} resources for node {}",
+            resource_type, node_id
+        );
 
         // Get available permits before acquiring
         let available = sem.available_permits();
         // Semaphore doesn't have a capacity() method, using available permits as total
         let total = available;
-        
+
         // Update metrics
         self.metrics.update_metrics(resource_type, available, total);
-        
+
         // Get priority for this node (higher is more important)
         let _priority = self.get_node_priority(node_id);
-        
+
         // Clone semaphore for the acquire_owned call
         let sem_clone = sem.clone();
-        
+
         // Acquire the semaphore with timeout
         let permit = match timeout(timeout_duration, sem_clone.acquire_owned()).await {
             Ok(Ok(permit)) => permit,
             Ok(Err(_)) => return Err("Failed to acquire resource permit".into()),
             Err(_) => {
-                let msg = format!("Timeout waiting for {:?} resources for node {}", resource_type, node_id);
+                let msg = format!(
+                    "Timeout waiting for {:?} resources for node {}",
+                    resource_type, node_id
+                );
                 warn!("{}", msg);
                 return Err(msg.into());
             }
@@ -228,32 +234,20 @@ impl Planner {
         let available = sem.available_permits();
         let total = match resource_type {
             ResourceType::Cpu => self.cpu_sem.available_permits() + 1, // +1 because we hold one permit
-            ResourceType::Gpu => 1, // Assuming single GPU
-            ResourceType::Remote => 10, // Default remote concurrency
+            ResourceType::Gpu => 1,                                    // Assuming single GPU
+            ResourceType::Remote => 10,                                // Default remote concurrency
         };
-        
+
         // Update the metrics for the appropriate resource type
         match resource_type {
             ResourceType::Cpu => {
-                self.metrics.update_metrics(
-                    resource_type,
-                    available,
-                    total
-                );
+                self.metrics.update_metrics(resource_type, available, total);
             }
             ResourceType::Gpu => {
-                self.metrics.update_metrics(
-                    resource_type,
-                    available,
-                    total
-                );
+                self.metrics.update_metrics(resource_type, available, total);
             }
             ResourceType::Remote => {
-                self.metrics.update_metrics(
-                    resource_type,
-                    available,
-                    total
-                );
+                self.metrics.update_metrics(resource_type, available, total);
             }
         }
 
@@ -318,20 +312,26 @@ impl Drop for ResourcePermit {
         if self._permit.is_some() {
             // Get the current metrics
             let metrics = self.metrics.get_metrics();
-            
+
             // Update the metrics for the appropriate resource type
             match self.resource_type {
                 ResourceType::Cpu => {
                     let available = metrics.cpu_available + 1;
-                    self.metrics.cpu_available.store(available, std::sync::atomic::Ordering::Relaxed);
+                    self.metrics
+                        .cpu_available
+                        .store(available, std::sync::atomic::Ordering::Relaxed);
                 }
                 ResourceType::Gpu => {
                     let available = metrics.gpu_available + 1;
-                    self.metrics.gpu_available.store(available, std::sync::atomic::Ordering::Relaxed);
+                    self.metrics
+                        .gpu_available
+                        .store(available, std::sync::atomic::Ordering::Relaxed);
                 }
                 ResourceType::Remote => {
                     let available = metrics.remote_available + 1;
-                    self.metrics.remote_available.store(available, std::sync::atomic::Ordering::Relaxed);
+                    self.metrics
+                        .remote_available
+                        .store(available, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
@@ -361,13 +361,16 @@ where
         planner: &Planner,
         node_id: &str,
         spec: &ResourceSpec,
-    ) -> impl Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
+    ) -> impl Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send + 'static
+    {
         let node_id = node_id.to_string();
         let spec = spec.clone();
         let planner = planner.clone();
-        
+
         async move {
-            planner.execute_with_resources(&node_id, &spec, || self).await
+            planner
+                .execute_with_resources(&node_id, &spec, || self)
+                .await
         }
     }
 }

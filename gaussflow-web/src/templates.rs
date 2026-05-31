@@ -1,5 +1,5 @@
 //! Template module for GaussFlow WebUI
-//! 
+//!
 //! This module provides template utilities for server-side rendering.
 //! Currently, the main UI is served as a static HTML file with client-side
 //! JavaScript, but this module can be expanded for SSR needs.
@@ -23,7 +23,7 @@ impl ErrorContext {
             401 => "Unauthorized",
             _ => "Error",
         };
-        
+
         Self {
             title: title.to_string(),
             message: message.into(),

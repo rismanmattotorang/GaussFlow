@@ -1,6 +1,14 @@
 # GaussFlow Development Backlog
 
-**All major features and technical tasks are implemented and tested as of June 2025. Only minor documentation and optimization tasks remain.**
+> **⚠️ This backlog is aspirational and does NOT reflect the true state of the code.**
+> Phase 0 is done — the workspace now **builds and tests green** and CI gates it — but most `[x]`
+> items below are still *planned or stubbed*, not implemented. A file-level audit
+> ([`docs/CODE_EVALUATION.md`](docs/CODE_EVALUATION.md)) found that the flagship
+> **prompt → DAG synthesis** capability does not exist yet, most node types are passthrough
+> stubs, storage backends are dummies, and there are duplicate/divergent core engines. The
+> authoritative, honest plan is **[`docs/PRODUCTION_ROADMAP.md`](docs/PRODUCTION_ROADMAP.md)**;
+> the flagship design is **[`docs/SYNTHESIS_PIPELINE.md`](docs/SYNTHESIS_PIPELINE.md)**. Treat
+> the checkboxes below as a wish list pending reconciliation with the roadmap, not as status.
 
 ## Phase 1: Foundation (Q1 2025)
 - [x] Core Engine:

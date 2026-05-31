@@ -80,7 +80,7 @@ impl Pagination {
     pub fn offset(&self) -> usize {
         self.page() * self.limit()
     }
-    
+
     /// Check if sorting is ascending
     pub fn is_ascending(&self) -> bool {
         self.sort_order.as_deref().unwrap_or("desc") == "asc"
@@ -107,8 +107,8 @@ impl PaginationMeta {
     pub fn new(pagination: &Pagination, total: usize) -> Self {
         let page = pagination.page();
         let limit = pagination.limit();
-        let total_pages = (total + limit - 1) / limit;
-        
+        let total_pages = total.div_ceil(limit);
+
         Self {
             page,
             limit,
@@ -159,7 +159,12 @@ impl ListFilter {
     pub fn tags_vec(&self) -> Vec<String> {
         self.tags
             .as_ref()
-            .map(|t| t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .map(|t| {
+                t.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -205,7 +210,10 @@ mod tests {
 
     #[test]
     fn test_pagination_limit_cap() {
-        let p = Pagination { limit: Some(200), ..Default::default() };
+        let p = Pagination {
+            limit: Some(200),
+            ..Default::default()
+        };
         assert_eq!(p.limit(), 100);
     }
 

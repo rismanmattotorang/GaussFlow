@@ -1,20 +1,19 @@
+use crate::dag::EdgeMetadata;
+use crate::model::{Backoff, EdgeSpec, RetrySpec, WorkflowSettings};
+use crate::resource::ResourceSpec;
 use bincode;
+use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use serde_json::Value;
-use crate::dag::{EdgeMetadata};
-use crate::model::{EdgeSpec, RetrySpec, Backoff, WorkflowSettings};
-use crate::resource::ResourceSpec;
 
 // Helper function to hash any serializable type
+#[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
 fn hash_value<T: serde::Serialize>(value: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     let bytes = bincode::serialize(value).unwrap_or_default();
     bytes.hash(&mut hasher);
     hasher.finish()
 }
-
-
 
 impl Hash for EdgeSpec {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -23,8 +22,6 @@ impl Hash for EdgeSpec {
         self.on.hash(state);
     }
 }
-
-
 
 impl Hash for EdgeMetadata {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -130,7 +127,7 @@ pub fn hash_json_map<H: Hasher>(map: &std::collections::HashMap<String, Value>, 
     let mut entries: Vec<_> = map.iter().collect();
     // Sort entries by key for consistent hashing
     entries.sort_by(|a, b| a.0.cmp(b.0));
-    
+
     for (k, v) in entries {
         k.hash(state);
         hash_json_value(v, state);

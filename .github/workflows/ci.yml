@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI must never fall back to a real credential; tests run against mock/local defaults only.
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ---- Gating: the build and test suite must pass on every PR. ----
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        # Required by the tonic/prost build scripts in the gRPC surface.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace
+        run: cargo build --workspace --locked
+
+      - name: Run tests
+        run: cargo test --workspace --locked
+
+  # ---- Lint & audit. rustfmt is gating (the tree is fully formatted); clippy and audit are
+  # informational until the remaining warnings (mostly dead_code in modules slated for the
+  # Phase 1 consolidation) and dependency advisories are cleared. ----
+  lint:
+    name: Lint & audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: rustfmt (gating)
+        run: cargo fmt --all --check
+
+      - name: clippy core + runtime + synth + security (gating)
+        # The product's heart is lint-clean and held to it. The interface crates (cli/web/tui)
+        # still carry scaffolding dead_code and are checked informationally below.
+        run: cargo clippy -p gaussflow-core -p gaussflow-runtime -p gaussflow-synth -p gaussflow-security --all-targets -- -D warnings
+
+      - name: clippy full workspace (informational)
+        run: cargo clippy --workspace --all-targets
+        continue-on-error: true
+
+      - name: cargo-audit
+        run: |
+          cargo install cargo-audit --locked || true
+          cargo audit
+        continue-on-error: true

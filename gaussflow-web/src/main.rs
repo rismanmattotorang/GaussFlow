@@ -1,5 +1,5 @@
 //! GaussFlow WebUI - Modern web interface for DAG workflow management
-//! 
+//!
 //! This application provides a comprehensive web-based interface for:
 //! - Workflow visualization and management
 //! - Real-time execution monitoring via WebSocket
@@ -16,9 +16,11 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{broadcast, RwLock};
 use tower_http::{
@@ -29,8 +31,6 @@ use tower_http::{
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 mod api;
 mod templates;
@@ -47,6 +47,8 @@ pub struct AppState {
     pub connected_clients: Arc<RwLock<usize>>,
     pub start_time: std::time::Instant,
     pub execution_counter: Arc<AtomicU64>,
+    /// Tamper-evident audit log of authorized mutating API calls.
+    pub audit: Arc<std::sync::Mutex<gaussflow_security::AuditLog>>,
 }
 
 impl AppState {
@@ -59,9 +61,10 @@ impl AppState {
             connected_clients: Arc::new(RwLock::new(0)),
             start_time: std::time::Instant::now(),
             execution_counter: Arc::new(AtomicU64::new(0)),
+            audit: Arc::new(std::sync::Mutex::new(gaussflow_security::AuditLog::new())),
         }
     }
-    
+
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.elapsed().as_secs()
     }
@@ -96,17 +99,13 @@ pub struct WorkflowInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum WorkflowStatus {
+    #[default]
     Draft,
     Active,
     Paused,
     Archived,
-}
-
-impl Default for WorkflowStatus {
-    fn default() -> Self {
-        Self::Draft
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,19 +130,15 @@ pub struct ExecutionInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ExecutionStatus {
+    #[default]
     Pending,
     Running,
     Completed,
     Failed,
     Cancelled,
     Paused,
-}
-
-impl Default for ExecutionStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,17 +153,13 @@ pub struct LogEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
+#[derive(Default)]
 pub enum LogLevel {
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
-    }
 }
 
 impl std::fmt::Display for LogLevel {
@@ -185,18 +176,49 @@ impl std::fmt::Display for LogLevel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerEvent {
-    WorkflowCreated { workflow: WorkflowInfo },
-    WorkflowUpdated { workflow: WorkflowInfo },
-    WorkflowDeleted { workflow_id: String },
-    ExecutionStarted { execution: ExecutionInfo },
-    ExecutionProgress { execution_id: String, progress: f32, current_node: Option<String> },
-    ExecutionNodeCompleted { execution_id: String, node_id: String, output: serde_json::Value },
-    ExecutionNodeFailed { execution_id: String, node_id: String, error: String },
-    ExecutionCompleted { execution: ExecutionInfo },
-    ExecutionFailed { execution: ExecutionInfo },
-    ExecutionCancelled { execution_id: String },
-    SystemMetrics { metrics: SystemMetrics },
-    LogEntry { execution_id: String, log: LogEntry },
+    WorkflowCreated {
+        workflow: WorkflowInfo,
+    },
+    WorkflowUpdated {
+        workflow: WorkflowInfo,
+    },
+    WorkflowDeleted {
+        workflow_id: String,
+    },
+    ExecutionStarted {
+        execution: ExecutionInfo,
+    },
+    ExecutionProgress {
+        execution_id: String,
+        progress: f32,
+        current_node: Option<String>,
+    },
+    ExecutionNodeCompleted {
+        execution_id: String,
+        node_id: String,
+        output: serde_json::Value,
+    },
+    ExecutionNodeFailed {
+        execution_id: String,
+        node_id: String,
+        error: String,
+    },
+    ExecutionCompleted {
+        execution: ExecutionInfo,
+    },
+    ExecutionFailed {
+        execution: ExecutionInfo,
+    },
+    ExecutionCancelled {
+        execution_id: String,
+    },
+    SystemMetrics {
+        metrics: SystemMetrics,
+    },
+    LogEntry {
+        execution_id: String,
+        log: LogEntry,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,7 +304,7 @@ impl<T: Serialize> ApiResponse<T> {
             meta: None,
         }
     }
-    
+
     pub fn success_with_meta(data: T, meta: ResponseMeta) -> Self {
         Self {
             success: true,
@@ -306,8 +328,12 @@ impl ApiResponse<()> {
             meta: None,
         }
     }
-    
-    pub fn error_with_details(code: impl Into<String>, message: impl Into<String>, details: serde_json::Value) -> Self {
+
+    pub fn error_with_details(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -329,12 +355,17 @@ impl ApiResponse<()> {
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| "gaussflow_web=info,tower_http=debug".into()))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "gaussflow_web=info,tower_http=debug".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("Starting GaussFlow WebUI Server v{}", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Starting GaussFlow WebUI Server v{}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Create application state
     let state = AppState::new();
@@ -360,7 +391,7 @@ async fn main() -> anyhow::Result<()> {
     info!("  Health:    http://{}/api/health", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    
+
     // Graceful shutdown handling
     let shutdown_signal = async {
         tokio::signal::ctrl_c()
@@ -368,11 +399,11 @@ async fn main() -> anyhow::Result<()> {
             .expect("Failed to install CTRL+C signal handler");
         info!("Shutdown signal received, gracefully shutting down...");
     };
-    
+
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
         .await?;
-    
+
     info!("Server shutdown complete");
     Ok(())
 }
@@ -381,18 +412,93 @@ async fn main() -> anyhow::Result<()> {
 // Router Setup
 // ============================================================================
 
+/// Auth boundary for the API.
+///
+/// Safe (read) methods pass through publicly; mutating requests (POST/PUT/DELETE/PATCH) require a
+/// valid `Authorization: Bearer <jwt>` whose roles permit mutations. If `GAUSSFLOW_JWT_SECRET` is
+/// unset the API is treated as **misconfigured** (503) rather than silently open. Each authorized
+/// mutation is recorded in the tamper-evident audit log.
+async fn require_auth(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::Method;
+    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+        return next.run(req).await;
+    }
+
+    let secret = match gaussflow_security::auth::secret_from_env() {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "auth not configured: set GAUSSFLOW_JWT_SECRET",
+            )
+                .into_response()
+        }
+    };
+
+    let token = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "));
+    let Some(token) = token else {
+        return (StatusCode::UNAUTHORIZED, "missing bearer token").into_response();
+    };
+    let claims = match gaussflow_security::auth::verify(&secret, token) {
+        Ok(c) => c,
+        Err(_) => return (StatusCode::UNAUTHORIZED, "invalid or expired token").into_response(),
+    };
+    if !gaussflow_security::rbac::authorize(
+        &claims.roles,
+        gaussflow_security::rbac::Action::ExecuteWorkflow,
+    ) {
+        return (StatusCode::FORBIDDEN, "insufficient role for this action").into_response();
+    }
+
+    // Record the authorized mutation in the tamper-evident audit log.
+    let action = req.method().as_str().to_string();
+    let target = req.uri().path().to_string();
+    if let Ok(mut log) = state.audit.lock() {
+        log.append(&claims.sub, &action, &target);
+    }
+
+    next.run(req).await
+}
+
+/// Return the audit log and whether its hash chain verifies.
+async fn get_audit(State(state): State<AppState>) -> impl IntoResponse {
+    let log = state.audit.lock().unwrap();
+    Json(serde_json::json!({
+        "valid": log.verify(),
+        "count": log.events().len(),
+        "events": log.events(),
+    }))
+}
+
 fn create_router(state: AppState) -> Router {
     // API routes
     let api_routes = Router::new()
+        .route("/audit", get(get_audit))
         // Workflow endpoints
         .route("/workflows", get(list_workflows).post(create_workflow))
-        .route("/workflows/:id", get(get_workflow).put(update_workflow).delete(delete_workflow))
+        .route(
+            "/workflows/:id",
+            get(get_workflow)
+                .put(update_workflow)
+                .delete(delete_workflow),
+        )
         .route("/workflows/:id/execute", post(execute_workflow))
         .route("/workflows/:id/validate", post(validate_workflow))
         .route("/workflows/:id/duplicate", post(duplicate_workflow))
         // Execution endpoints
         .route("/executions", get(list_executions))
-        .route("/executions/:id", get(get_execution).delete(delete_execution))
+        .route(
+            "/executions/:id",
+            get(get_execution).delete(delete_execution),
+        )
         .route("/executions/:id/cancel", post(cancel_execution))
         .route("/executions/:id/pause", post(pause_execution))
         .route("/executions/:id/resume", post(resume_execution))
@@ -400,11 +506,12 @@ fn create_router(state: AppState) -> Router {
         // System endpoints
         .route("/health", get(health_check))
         .route("/metrics", get(get_metrics))
+        .route("/metrics/prometheus", get(prometheus_metrics_handler))
         .route("/stats", get(get_stats));
 
     // Create static file service with fallback
-    let static_service = ServeDir::new("gaussflow-web/static")
-        .not_found_service(ServeDir::new("static"));
+    let static_service =
+        ServeDir::new("gaussflow-web/static").not_found_service(ServeDir::new("static"));
 
     Router::new()
         // Serve the main HTML page for SPA routes
@@ -416,17 +523,25 @@ fn create_router(state: AppState) -> Router {
         .route("/executions/*path", get(serve_index))
         .route("/settings", get(serve_index))
         // API routes
-        .nest("/api", api_routes)
+        .nest(
+            "/api",
+            api_routes.layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                require_auth,
+            )),
+        )
         // WebSocket endpoint
         .route("/ws", get(websocket_handler))
         // Static files
         .nest_service("/static", static_service)
         // Add middleware
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         .with_state(state)
 }
 
@@ -448,12 +563,10 @@ async fn list_workflows(
 ) -> impl IntoResponse {
     let limit = query.limit.unwrap_or(50).min(100);
     let page = query.page.unwrap_or(0);
-    
-    let mut workflows: Vec<WorkflowInfo> = state.workflows
-        .iter()
-        .map(|r| r.value().clone())
-        .collect();
-    
+
+    let mut workflows: Vec<WorkflowInfo> =
+        state.workflows.iter().map(|r| r.value().clone()).collect();
+
     // Filter by status if provided
     if let Some(status_str) = &query.status {
         workflows.retain(|w| {
@@ -467,39 +580,53 @@ async fn list_workflows(
             status_match
         });
     }
-    
+
     // Filter by search if provided
     if let Some(search) = &query.search {
         let search_lower = search.to_lowercase();
         workflows.retain(|w| {
-            w.name.to_lowercase().contains(&search_lower) ||
-            w.description.as_ref().map_or(false, |d| d.to_lowercase().contains(&search_lower))
+            w.name.to_lowercase().contains(&search_lower)
+                || w.description
+                    .as_ref()
+                    .is_some_and(|d| d.to_lowercase().contains(&search_lower))
         });
     }
-    
+
     // Sort workflows
     let sort_order = query.sort_order.as_deref().unwrap_or("desc");
     match query.sort_by.as_deref().unwrap_or("updated_at") {
         "name" => workflows.sort_by(|a, b| {
-            if sort_order == "asc" { a.name.cmp(&b.name) } else { b.name.cmp(&a.name) }
+            if sort_order == "asc" {
+                a.name.cmp(&b.name)
+            } else {
+                b.name.cmp(&a.name)
+            }
         }),
         "created_at" => workflows.sort_by(|a, b| {
-            if sort_order == "asc" { a.created_at.cmp(&b.created_at) } else { b.created_at.cmp(&a.created_at) }
+            if sort_order == "asc" {
+                a.created_at.cmp(&b.created_at)
+            } else {
+                b.created_at.cmp(&a.created_at)
+            }
         }),
         _ => workflows.sort_by(|a, b| {
-            if sort_order == "asc" { a.updated_at.cmp(&b.updated_at) } else { b.updated_at.cmp(&a.updated_at) }
+            if sort_order == "asc" {
+                a.updated_at.cmp(&b.updated_at)
+            } else {
+                b.updated_at.cmp(&a.updated_at)
+            }
         }),
     }
-    
+
     let total = workflows.len();
     let workflows: Vec<WorkflowInfo> = workflows
         .into_iter()
         .skip(page * limit)
         .take(limit)
         .collect();
-    
+
     let has_more = (page + 1) * limit < total;
-    
+
     Json(ApiResponse::success_with_meta(
         workflows,
         ResponseMeta {
@@ -507,7 +634,7 @@ async fn list_workflows(
             page: Some(page),
             limit: Some(limit),
             has_more: Some(has_more),
-        }
+        },
     ))
 }
 
@@ -517,22 +644,25 @@ async fn create_workflow(
 ) -> impl IntoResponse {
     // Validate name
     if req.name.trim().is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "INVALID_NAME", "message": "Workflow name cannot be empty"}
-        })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "INVALID_NAME", "message": "Workflow name cannot be empty"}
+            })),
+        );
     }
-    
+
     // Parse and validate the workflow spec
     let dag_result = gaussflow_core::TypeSafeDag::from_json(
-        &serde_json::to_string(&req.spec).unwrap_or_default()
+        &serde_json::to_string(&req.spec).unwrap_or_default(),
     );
 
     match dag_result {
         Ok(dag) => {
             let id = Uuid::new_v4().to_string();
             let now = Utc::now();
-            
+
             let workflow = WorkflowInfo {
                 id: id.clone(),
                 name: req.name.trim().to_string(),
@@ -546,45 +676,59 @@ async fn create_workflow(
                 tags: req.tags,
                 version: 1,
             };
-            
+
             state.workflows.insert(id, workflow.clone());
-            
+
             // Broadcast event
-            let _ = state.event_tx.send(ServerEvent::WorkflowCreated { workflow: workflow.clone() });
-            
-            info!("Created workflow '{}' with {} nodes", workflow.name, workflow.node_count);
-            
-            (StatusCode::CREATED, Json(serde_json::json!({
-                "success": true,
-                "data": workflow
-            })))
+            let _ = state.event_tx.send(ServerEvent::WorkflowCreated {
+                workflow: workflow.clone(),
+            });
+
+            info!(
+                "Created workflow '{}' with {} nodes",
+                workflow.name, workflow.node_count
+            );
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "success": true,
+                    "data": workflow
+                })),
+            )
         }
         Err(e) => {
             warn!("Failed to create workflow: {}", e);
-            (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                "success": false,
-                "error": {
-                    "code": "INVALID_WORKFLOW",
-                    "message": format!("Invalid workflow specification: {}", e)
-                }
-            })))
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": {
+                        "code": "INVALID_WORKFLOW",
+                        "message": format!("Invalid workflow specification: {}", e)
+                    }
+                })),
+            )
         }
     }
 }
 
-async fn get_workflow(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn get_workflow(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.workflows.get(&id) {
-        Some(workflow) => (StatusCode::OK, Json(serde_json::json!({
-            "success": true,
-            "data": workflow.clone()
-        }))),
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
-        }))),
+        Some(workflow) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "success": true,
+                "data": workflow.clone()
+            })),
+        ),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
+            })),
+        ),
     }
 }
 
@@ -596,25 +740,28 @@ async fn update_workflow(
     match state.workflows.get_mut(&id) {
         Some(mut workflow) => {
             let now = Utc::now();
-            
+
             if let Some(name) = req.name {
                 if name.trim().is_empty() {
-                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                        "success": false,
-                        "error": {"code": "INVALID_NAME", "message": "Workflow name cannot be empty"}
-                    })));
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "success": false,
+                            "error": {"code": "INVALID_NAME", "message": "Workflow name cannot be empty"}
+                        })),
+                    );
                 }
                 workflow.name = name.trim().to_string();
             }
-            
+
             if let Some(description) = req.description {
                 workflow.description = Some(description.trim().to_string());
             }
-            
+
             if let Some(spec) = req.spec {
                 // Validate the new spec
                 match gaussflow_core::TypeSafeDag::from_json(
-                    &serde_json::to_string(&spec).unwrap_or_default()
+                    &serde_json::to_string(&spec).unwrap_or_default(),
                 ) {
                     Ok(dag) => {
                         workflow.spec = spec;
@@ -622,45 +769,56 @@ async fn update_workflow(
                         workflow.edge_count = dag.graph.edge_count();
                     }
                     Err(e) => {
-                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                            "success": false,
-                            "error": {
-                                "code": "INVALID_WORKFLOW",
-                                "message": format!("Invalid workflow specification: {}", e)
-                            }
-                        })));
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "success": false,
+                                "error": {
+                                    "code": "INVALID_WORKFLOW",
+                                    "message": format!("Invalid workflow specification: {}", e)
+                                }
+                            })),
+                        );
                     }
                 }
             }
-            
+
             if let Some(status) = req.status {
                 workflow.status = status;
             }
-            
+
             if let Some(tags) = req.tags {
                 workflow.tags = tags;
             }
-            
+
             workflow.updated_at = now;
             workflow.version += 1;
-            
+
             let updated = workflow.clone();
             drop(workflow);
-            
+
             // Broadcast event
-            let _ = state.event_tx.send(ServerEvent::WorkflowUpdated { workflow: updated.clone() });
-            
+            let _ = state.event_tx.send(ServerEvent::WorkflowUpdated {
+                workflow: updated.clone(),
+            });
+
             info!("Updated workflow '{}'", updated.name);
-            
-            (StatusCode::OK, Json(serde_json::json!({
-                "success": true,
-                "data": updated
-            })))
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "data": updated
+                })),
+            )
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
-        }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
+            })),
+        ),
     }
 }
 
@@ -669,33 +827,45 @@ async fn delete_workflow(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     // Check if there are running executions for this workflow
-    let has_running = state.executions.iter().any(|e| {
-        e.workflow_id == id && e.status == ExecutionStatus::Running
-    });
-    
+    let has_running = state
+        .executions
+        .iter()
+        .any(|e| e.workflow_id == id && e.status == ExecutionStatus::Running);
+
     if has_running {
-        return (StatusCode::CONFLICT, Json(serde_json::json!({
-            "success": false,
-            "error": {
-                "code": "HAS_RUNNING_EXECUTIONS",
-                "message": "Cannot delete workflow with running executions"
-            }
-        })));
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {
+                    "code": "HAS_RUNNING_EXECUTIONS",
+                    "message": "Cannot delete workflow with running executions"
+                }
+            })),
+        );
     }
-    
+
     match state.workflows.remove(&id) {
         Some((_, workflow)) => {
-            let _ = state.event_tx.send(ServerEvent::WorkflowDeleted { workflow_id: id.clone() });
+            let _ = state.event_tx.send(ServerEvent::WorkflowDeleted {
+                workflow_id: id.clone(),
+            });
             info!("Deleted workflow '{}'", workflow.name);
-            (StatusCode::OK, Json(serde_json::json!({
-                "success": true,
-                "data": {"deleted": true, "id": id}
-            })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "data": {"deleted": true, "id": id}
+                })),
+            )
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
-        }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
+            })),
+        ),
     }
 }
 
@@ -706,42 +876,49 @@ async fn validate_workflow(
     match state.workflows.get(&id) {
         Some(workflow) => {
             let validation_result = gaussflow_core::TypeSafeDag::from_json(
-                &serde_json::to_string(&workflow.spec).unwrap_or_default()
+                &serde_json::to_string(&workflow.spec).unwrap_or_default(),
             );
-            
+
             match validation_result {
                 Ok(dag) => {
                     // Try to validate the DAG structure
                     let errors: Vec<String> = Vec::new();
                     let warnings: Vec<String> = Vec::new();
-                    
-                    (StatusCode::OK, Json(serde_json::json!({
-                        "success": true,
-                        "data": {
-                            "valid": errors.is_empty(),
-                            "errors": errors,
-                            "warnings": warnings,
-                            "node_count": dag.graph.node_count(),
-                            "edge_count": dag.graph.edge_count()
-                        }
-                    })))
+
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "valid": errors.is_empty(),
+                                "errors": errors,
+                                "warnings": warnings,
+                                "node_count": dag.graph.node_count(),
+                                "edge_count": dag.graph.edge_count()
+                            }
+                        })),
+                    )
                 }
-                Err(e) => {
-                    (StatusCode::OK, Json(serde_json::json!({
+                Err(e) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
                         "success": true,
                         "data": {
                             "valid": false,
                             "errors": [format!("{}", e)],
                             "warnings": []
                         }
-                    })))
-                }
+                    })),
+                ),
             }
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
-        }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
+            })),
+        ),
     }
 }
 
@@ -753,7 +930,7 @@ async fn duplicate_workflow(
         Some(workflow) => {
             let new_id = Uuid::new_v4().to_string();
             let now = Utc::now();
-            
+
             let new_workflow = WorkflowInfo {
                 id: new_id.clone(),
                 name: format!("{} (Copy)", workflow.name),
@@ -767,22 +944,33 @@ async fn duplicate_workflow(
                 tags: workflow.tags.clone(),
                 version: 1,
             };
-            
+
             state.workflows.insert(new_id, new_workflow.clone());
-            
-            let _ = state.event_tx.send(ServerEvent::WorkflowCreated { workflow: new_workflow.clone() });
-            
-            info!("Duplicated workflow '{}' as '{}'", workflow.name, new_workflow.name);
-            
-            (StatusCode::CREATED, Json(serde_json::json!({
-                "success": true,
-                "data": new_workflow
-            })))
+
+            let _ = state.event_tx.send(ServerEvent::WorkflowCreated {
+                workflow: new_workflow.clone(),
+            });
+
+            info!(
+                "Duplicated workflow '{}' as '{}'",
+                workflow.name, new_workflow.name
+            );
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "success": true,
+                    "data": new_workflow
+                })),
+            )
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
-        }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
+            })),
+        ),
     }
 }
 
@@ -798,30 +986,36 @@ async fn execute_workflow(
     let workflow = match state.workflows.get(&workflow_id) {
         Some(w) => w.clone(),
         None => {
-            return (StatusCode::NOT_FOUND, Json(serde_json::json!({
-                "success": false,
-                "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
-            })));
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": {"code": "NOT_FOUND", "message": "Workflow not found"}
+                })),
+            );
         }
     };
-    
+
     // Check if workflow is active
     if workflow.status != WorkflowStatus::Active {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false,
-            "error": {
-                "code": "WORKFLOW_NOT_ACTIVE",
-                "message": "Workflow must be active to execute"
-            }
-        })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {
+                    "code": "WORKFLOW_NOT_ACTIVE",
+                    "message": "Workflow must be active to execute"
+                }
+            })),
+        );
     }
 
     let execution_id = Uuid::new_v4().to_string();
     let now = Utc::now();
-    
+
     // Increment execution counter
     state.execution_counter.fetch_add(1, Ordering::SeqCst);
-    
+
     let execution = ExecutionInfo {
         id: execution_id.clone(),
         workflow_id: workflow_id.clone(),
@@ -846,27 +1040,37 @@ async fn execute_workflow(
         }],
         duration_ms: None,
     };
-    
-    state.executions.insert(execution_id.clone(), execution.clone());
-    
+
+    state
+        .executions
+        .insert(execution_id.clone(), execution.clone());
+
     // Broadcast execution started
-    let _ = state.event_tx.send(ServerEvent::ExecutionStarted { execution: execution.clone() });
-    
-    info!("Started execution {} for workflow '{}'", execution_id, workflow.name);
-    
-    // Spawn background task to simulate execution
+    let _ = state.event_tx.send(ServerEvent::ExecutionStarted {
+        execution: execution.clone(),
+    });
+
+    info!(
+        "Started execution {} for workflow '{}'",
+        execution_id, workflow.name
+    );
+
+    // Spawn background task to run the workflow on the real engine.
     let exec_state = state.clone();
     let exec_id = execution_id.clone();
     let spec = workflow.spec.clone();
-    
+
     tokio::spawn(async move {
-        simulate_execution(exec_state, exec_id, spec).await;
+        run_execution(exec_state, exec_id, spec).await;
     });
-    
-    (StatusCode::ACCEPTED, Json(serde_json::json!({
-        "success": true,
-        "data": execution
-    })))
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "success": true,
+            "data": execution
+        })),
+    )
 }
 
 async fn list_executions(
@@ -875,27 +1079,23 @@ async fn list_executions(
 ) -> impl IntoResponse {
     let limit = query.limit.unwrap_or(50).min(100);
     let page = query.page.unwrap_or(0);
-    
-    let mut executions: Vec<ExecutionInfo> = state.executions
-        .iter()
-        .map(|r| r.value().clone())
-        .collect();
-    
+
+    let mut executions: Vec<ExecutionInfo> =
+        state.executions.iter().map(|r| r.value().clone()).collect();
+
     // Filter by status if provided
     if let Some(status_str) = &query.status {
-        executions.retain(|e| {
-            match status_str.to_lowercase().as_str() {
-                "running" => e.status == ExecutionStatus::Running,
-                "completed" => e.status == ExecutionStatus::Completed,
-                "failed" => e.status == ExecutionStatus::Failed,
-                "cancelled" => e.status == ExecutionStatus::Cancelled,
-                "pending" => e.status == ExecutionStatus::Pending,
-                "paused" => e.status == ExecutionStatus::Paused,
-                _ => true,
-            }
+        executions.retain(|e| match status_str.to_lowercase().as_str() {
+            "running" => e.status == ExecutionStatus::Running,
+            "completed" => e.status == ExecutionStatus::Completed,
+            "failed" => e.status == ExecutionStatus::Failed,
+            "cancelled" => e.status == ExecutionStatus::Cancelled,
+            "pending" => e.status == ExecutionStatus::Pending,
+            "paused" => e.status == ExecutionStatus::Paused,
+            _ => true,
         });
     }
-    
+
     // Sort by started_at descending by default
     let sort_order = query.sort_order.as_deref().unwrap_or("desc");
     executions.sort_by(|a, b| {
@@ -905,16 +1105,16 @@ async fn list_executions(
             b.started_at.cmp(&a.started_at)
         }
     });
-    
+
     let total = executions.len();
     let executions: Vec<ExecutionInfo> = executions
         .into_iter()
         .skip(page * limit)
         .take(limit)
         .collect();
-    
+
     let has_more = (page + 1) * limit < total;
-    
+
     Json(ApiResponse::success_with_meta(
         executions,
         ResponseMeta {
@@ -922,23 +1122,26 @@ async fn list_executions(
             page: Some(page),
             limit: Some(limit),
             has_more: Some(has_more),
-        }
+        },
     ))
 }
 
-async fn get_execution(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn get_execution(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.executions.get(&id) {
-        Some(execution) => (StatusCode::OK, Json(serde_json::json!({
-            "success": true,
-            "data": execution.clone()
-        }))),
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Execution not found"}
-        }))),
+        Some(execution) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "success": true,
+                "data": execution.clone()
+            })),
+        ),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Execution not found"}
+            })),
+        ),
     }
 }
 
@@ -947,26 +1150,33 @@ async fn delete_execution(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.executions.get(&id) {
-        Some(exec) if exec.status == ExecutionStatus::Running => {
-            (StatusCode::CONFLICT, Json(serde_json::json!({
+        Some(exec) if exec.status == ExecutionStatus::Running => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
                 "success": false,
                 "error": {
                     "code": "EXECUTION_RUNNING",
                     "message": "Cannot delete a running execution. Cancel it first."
                 }
-            })))
-        }
+            })),
+        ),
         Some(_) => {
             state.executions.remove(&id);
-            (StatusCode::OK, Json(serde_json::json!({
-                "success": true,
-                "data": {"deleted": true, "id": id}
-            })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "data": {"deleted": true, "id": id}
+                })),
+            )
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Execution not found"}
-        }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Execution not found"}
+            })),
+        ),
     }
 }
 
@@ -976,16 +1186,21 @@ async fn cancel_execution(
 ) -> impl IntoResponse {
     match state.executions.get_mut(&id) {
         Some(mut execution) => {
-            if execution.status != ExecutionStatus::Running && execution.status != ExecutionStatus::Paused {
-                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                    "success": false,
-                    "error": {
-                        "code": "INVALID_STATE",
-                        "message": "Execution is not running or paused"
-                    }
-                })));
+            if execution.status != ExecutionStatus::Running
+                && execution.status != ExecutionStatus::Paused
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "success": false,
+                        "error": {
+                            "code": "INVALID_STATE",
+                            "message": "Execution is not running or paused"
+                        }
+                    })),
+                );
             }
-            
+
             let now = Utc::now();
             execution.status = ExecutionStatus::Cancelled;
             execution.finished_at = Some(now);
@@ -997,23 +1212,31 @@ async fn cancel_execution(
                 node_id: None,
                 metadata: None,
             });
-            
+
             let cancelled_exec = execution.clone();
             drop(execution);
-            
-            let _ = state.event_tx.send(ServerEvent::ExecutionCancelled { execution_id: id.clone() });
-            
+
+            let _ = state.event_tx.send(ServerEvent::ExecutionCancelled {
+                execution_id: id.clone(),
+            });
+
             info!("Cancelled execution {}", id);
-            
-            (StatusCode::OK, Json(serde_json::json!({
-                "success": true,
-                "data": cancelled_exec
-            })))
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "data": cancelled_exec
+                })),
+            )
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Execution not found"}
-        }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Execution not found"}
+            })),
+        ),
     }
 }
 
@@ -1024,15 +1247,18 @@ async fn pause_execution(
     match state.executions.get_mut(&id) {
         Some(mut execution) => {
             if execution.status != ExecutionStatus::Running {
-                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                    "success": false,
-                    "error": {
-                        "code": "INVALID_STATE",
-                        "message": "Execution is not running"
-                    }
-                })));
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "success": false,
+                        "error": {
+                            "code": "INVALID_STATE",
+                            "message": "Execution is not running"
+                        }
+                    })),
+                );
             }
-            
+
             execution.status = ExecutionStatus::Paused;
             execution.logs.push(LogEntry {
                 timestamp: Utc::now(),
@@ -1041,18 +1267,24 @@ async fn pause_execution(
                 node_id: None,
                 metadata: None,
             });
-            
+
             let paused_exec = execution.clone();
-            
-            (StatusCode::OK, Json(serde_json::json!({
-                "success": true,
-                "data": paused_exec
-            })))
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "data": paused_exec
+                })),
+            )
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Execution not found"}
-        }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Execution not found"}
+            })),
+        ),
     }
 }
 
@@ -1063,15 +1295,18 @@ async fn resume_execution(
     match state.executions.get_mut(&id) {
         Some(mut execution) => {
             if execution.status != ExecutionStatus::Paused {
-                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                    "success": false,
-                    "error": {
-                        "code": "INVALID_STATE",
-                        "message": "Execution is not paused"
-                    }
-                })));
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "success": false,
+                        "error": {
+                            "code": "INVALID_STATE",
+                            "message": "Execution is not paused"
+                        }
+                    })),
+                );
             }
-            
+
             execution.status = ExecutionStatus::Running;
             execution.logs.push(LogEntry {
                 timestamp: Utc::now(),
@@ -1080,18 +1315,24 @@ async fn resume_execution(
                 node_id: None,
                 metadata: None,
             });
-            
+
             let resumed_exec = execution.clone();
-            
-            (StatusCode::OK, Json(serde_json::json!({
-                "success": true,
-                "data": resumed_exec
-            })))
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "data": resumed_exec
+                })),
+            )
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Execution not found"}
-        }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Execution not found"}
+            })),
+        ),
     }
 }
 
@@ -1104,30 +1345,37 @@ async fn get_execution_logs(
         Some(execution) => {
             let limit = query.limit.unwrap_or(100).min(500);
             let page = query.page.unwrap_or(0);
-            
+
             let total = execution.logs.len();
-            let logs: Vec<LogEntry> = execution.logs
+            let logs: Vec<LogEntry> = execution
+                .logs
                 .iter()
                 .skip(page * limit)
                 .take(limit)
                 .cloned()
                 .collect();
-            
-            (StatusCode::OK, Json(serde_json::json!({
-                "success": true,
-                "data": logs,
-                "meta": {
-                    "total": total,
-                    "page": page,
-                    "limit": limit,
-                    "has_more": (page + 1) * limit < total
-                }
-            })))
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "data": logs,
+                    "meta": {
+                        "total": total,
+                        "page": page,
+                        "limit": limit,
+                        "has_more": (page + 1) * limit < total
+                    }
+                })),
+            )
         }
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false,
-            "error": {"code": "NOT_FOUND", "message": "Execution not found"}
-        }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {"code": "NOT_FOUND", "message": "Execution not found"}
+            })),
+        ),
     }
 }
 
@@ -1144,14 +1392,26 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     }))
 }
 
+/// Prometheus text-exposition endpoint, serving the runtime's real run/node metrics.
+async fn prometheus_metrics_handler() -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        gaussflow_runtime::prometheus_metrics(),
+    )
+}
+
 async fn get_metrics(State(state): State<AppState>) -> impl IntoResponse {
-    let active_executions = state.executions
+    let active_executions = state
+        .executions
         .iter()
         .filter(|e| e.status == ExecutionStatus::Running)
         .count();
-    
+
     let clients = *state.connected_clients.read().await;
-    
+
     Json(ApiResponse::success(SystemMetrics {
         cpu_usage: 0.0, // Would need actual system metrics
         memory_usage: 0.0,
@@ -1165,18 +1425,34 @@ async fn get_metrics(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn get_stats(State(state): State<AppState>) -> impl IntoResponse {
     let total_executions = state.executions.len();
-    let completed = state.executions.iter().filter(|e| e.status == ExecutionStatus::Completed).count();
-    let failed = state.executions.iter().filter(|e| e.status == ExecutionStatus::Failed).count();
-    let running = state.executions.iter().filter(|e| e.status == ExecutionStatus::Running).count();
-    let cancelled = state.executions.iter().filter(|e| e.status == ExecutionStatus::Cancelled).count();
-    
+    let completed = state
+        .executions
+        .iter()
+        .filter(|e| e.status == ExecutionStatus::Completed)
+        .count();
+    let failed = state
+        .executions
+        .iter()
+        .filter(|e| e.status == ExecutionStatus::Failed)
+        .count();
+    let running = state
+        .executions
+        .iter()
+        .filter(|e| e.status == ExecutionStatus::Running)
+        .count();
+    let cancelled = state
+        .executions
+        .iter()
+        .filter(|e| e.status == ExecutionStatus::Cancelled)
+        .count();
+
     let finished = completed + failed;
-    let success_rate = if finished > 0 { 
-        (completed as f64 / finished as f64 * 100.0).round() 
-    } else { 
-        0.0 
+    let success_rate = if finished > 0 {
+        (completed as f64 / finished as f64 * 100.0).round()
+    } else {
+        0.0
     };
-    
+
     Json(ApiResponse::success(serde_json::json!({
         "workflows": {
             "total": state.workflows.len(),
@@ -1214,14 +1490,14 @@ async fn websocket_handler(
 async fn handle_websocket(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let mut event_rx = state.event_tx.subscribe();
-    
+
     // Update connected clients count
     {
         let mut clients = state.connected_clients.write().await;
         *clients += 1;
         info!("WebSocket client connected. Total: {}", *clients);
     }
-    
+
     // Send initial data
     let initial_data = serde_json::json!({
         "type": "initial_data",
@@ -1229,13 +1505,13 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
         "executions": state.executions.iter().map(|r| r.value().clone()).collect::<Vec<_>>(),
         "timestamp": Utc::now().to_rfc3339()
     });
-    
+
     if let Ok(msg) = serde_json::to_string(&initial_data) {
         if sender.send(Message::Text(msg)).await.is_err() {
             warn!("Failed to send initial data to WebSocket client");
         }
     }
-    
+
     // Handle incoming messages and broadcast events
     loop {
         tokio::select! {
@@ -1303,7 +1579,7 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
             }
         }
     }
-    
+
     // Update connected clients count
     {
         let mut clients = state.connected_clients.write().await;
@@ -1316,149 +1592,108 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
 // Background Tasks
 // ============================================================================
 
-async fn simulate_execution(state: AppState, execution_id: String, spec: serde_json::Value) {
-    // Parse the spec to get nodes
-    let nodes: Vec<String> = spec.get("nodes")
-        .and_then(|n| n.as_array())
-        .map(|arr| arr.iter()
-            .filter_map(|n| n.get("id").and_then(|id| id.as_str()).map(String::from))
-            .collect())
-        .unwrap_or_default();
-    
-    let total_nodes = nodes.len().max(1);
-    
-    for (i, node_id) in nodes.iter().enumerate() {
-        // Check if execution was cancelled or paused
-        if let Some(exec) = state.executions.get(&execution_id) {
-            match exec.status {
-                ExecutionStatus::Cancelled => {
-                    info!("Execution {} was cancelled", execution_id);
-                    return;
+/// Run a workflow on the real GaussFlow engine and reflect progress into the execution record
+/// and the WebSocket event stream. Replaces the former `simulate_execution`.
+async fn run_execution(state: AppState, execution_id: String, spec: serde_json::Value) {
+    use gaussflow_core::TypeSafeDag;
+
+    // Parse + execute on the canonical engine (in-memory run store; no database required).
+    let spec_json = spec.to_string();
+    let result = match TypeSafeDag::from_json(&spec_json) {
+        Ok(dag) => gaussflow_runtime::execute(dag, serde_json::json!({})).await,
+        Err(e) => Err(Box::<dyn std::error::Error + Send + Sync>::from(
+            e.to_string(),
+        )),
+    };
+
+    match result {
+        Ok(run) => {
+            let empty = serde_json::Map::new();
+            let outputs = run
+                .get("outputs")
+                .and_then(|o| o.as_object())
+                .unwrap_or(&empty);
+            let total = outputs
+                .iter()
+                .filter(|(k, _)| k.as_str() != "input")
+                .count()
+                .max(1);
+
+            let mut done = 0usize;
+            for (node_id, output) in outputs.iter() {
+                if node_id == "input" {
+                    continue;
                 }
-                ExecutionStatus::Paused => {
-                    // Wait until resumed or cancelled
-                    drop(exec);
-                    loop {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        if let Some(exec) = state.executions.get(&execution_id) {
-                            match exec.status {
-                                ExecutionStatus::Running => break,
-                                ExecutionStatus::Cancelled => return,
-                                _ => continue,
-                            }
-                        }
-                    }
+                done += 1;
+                if let Some(mut exec) = state.executions.get_mut(&execution_id) {
+                    exec.completed_nodes.push(node_id.clone());
+                    exec.node_outputs.insert(node_id.clone(), output.clone());
+                    exec.progress = (done as f32 / total as f32) * 100.0;
                 }
-                _ => {}
+                let _ = state.event_tx.send(ServerEvent::ExecutionNodeCompleted {
+                    execution_id: execution_id.clone(),
+                    node_id: node_id.clone(),
+                    output: output.clone(),
+                });
+            }
+
+            if let Some(mut exec) = state.executions.get_mut(&execution_id) {
+                let now = Utc::now();
+                exec.status = ExecutionStatus::Completed;
+                exec.finished_at = Some(now);
+                exec.progress = 100.0;
+                exec.current_node = None;
+                exec.duration_ms = Some((now - exec.started_at).num_milliseconds() as u64);
+                exec.output = run.get("output").cloned();
+                exec.logs.push(LogEntry {
+                    timestamp: now,
+                    level: LogLevel::Info,
+                    message: "Execution completed".to_string(),
+                    node_id: None,
+                    metadata: None,
+                });
+                info!("Execution {} completed", execution_id);
+                let _ = state.event_tx.send(ServerEvent::ExecutionCompleted {
+                    execution: exec.clone(),
+                });
             }
         }
-        
-        // Update current node
-        if let Some(mut exec) = state.executions.get_mut(&execution_id) {
-            exec.current_node = Some(node_id.clone());
-            exec.progress = ((i as f32 + 0.5) / total_nodes as f32) * 100.0;
-            exec.logs.push(LogEntry {
-                timestamp: Utc::now(),
-                level: LogLevel::Info,
-                message: format!("Executing node: {}", node_id),
-                node_id: Some(node_id.clone()),
-                metadata: None,
-            });
-        }
-        
-        // Broadcast progress
-        let _ = state.event_tx.send(ServerEvent::ExecutionProgress {
-            execution_id: execution_id.clone(),
-            progress: ((i as f32 + 0.5) / total_nodes as f32) * 100.0,
-            current_node: Some(node_id.clone()),
-        });
-        
-        // Simulate node execution time with proper random
-        let exec_time = 500 + (fast_random() % 1000);
-        tokio::time::sleep(Duration::from_millis(exec_time)).await;
-        
-        // Mark node as completed
-        let output = serde_json::json!({
-            "node_id": node_id,
-            "result": "success",
-            "data": { 
-                "processed": true,
-                "timestamp": Utc::now().to_rfc3339(),
-                "execution_time_ms": exec_time
+        Err(e) => {
+            if let Some(mut exec) = state.executions.get_mut(&execution_id) {
+                let now = Utc::now();
+                exec.status = ExecutionStatus::Failed;
+                exec.finished_at = Some(now);
+                exec.current_node = None;
+                exec.duration_ms = Some((now - exec.started_at).num_milliseconds() as u64);
+                exec.error = Some(e.to_string());
+                exec.logs.push(LogEntry {
+                    timestamp: now,
+                    level: LogLevel::Error,
+                    message: format!("Execution failed: {e}"),
+                    node_id: None,
+                    metadata: None,
+                });
+                tracing::error!("Execution {} failed: {e}", execution_id);
+                let _ = state.event_tx.send(ServerEvent::ExecutionFailed {
+                    execution: exec.clone(),
+                });
             }
-        });
-        
-        if let Some(mut exec) = state.executions.get_mut(&execution_id) {
-            exec.completed_nodes.push(node_id.clone());
-            exec.node_outputs.insert(node_id.clone(), output.clone());
-            exec.progress = ((i + 1) as f32 / total_nodes as f32) * 100.0;
-            exec.logs.push(LogEntry {
-                timestamp: Utc::now(),
-                level: LogLevel::Info,
-                message: format!("Node '{}' completed successfully", node_id),
-                node_id: Some(node_id.clone()),
-                metadata: Some(serde_json::json!({"execution_time_ms": exec_time})),
-            });
         }
-        
-        let _ = state.event_tx.send(ServerEvent::ExecutionNodeCompleted {
-            execution_id: execution_id.clone(),
-            node_id: node_id.clone(),
-            output,
-        });
-        
-        // Broadcast log entry
-        let _ = state.event_tx.send(ServerEvent::LogEntry {
-            execution_id: execution_id.clone(),
-            log: LogEntry {
-                timestamp: Utc::now(),
-                level: LogLevel::Info,
-                message: format!("Node '{}' completed", node_id),
-                node_id: Some(node_id.clone()),
-                metadata: None,
-            },
-        });
-    }
-    
-    // Mark execution as completed
-    if let Some(mut exec) = state.executions.get_mut(&execution_id) {
-        let now = Utc::now();
-        exec.status = ExecutionStatus::Completed;
-        exec.finished_at = Some(now);
-        exec.progress = 100.0;
-        exec.current_node = None;
-        let duration = (now - exec.started_at).num_milliseconds() as u64;
-        exec.duration_ms = Some(duration);
-        exec.output = Some(serde_json::json!({
-            "success": true,
-            "nodes_executed": exec.completed_nodes.len(),
-            "duration_ms": duration
-        }));
-        exec.logs.push(LogEntry {
-            timestamp: now,
-            level: LogLevel::Info,
-            message: format!("Execution completed successfully in {}ms", duration),
-            node_id: None,
-            metadata: None,
-        });
-        
-        info!("Execution {} completed successfully", execution_id);
-        
-        let _ = state.event_tx.send(ServerEvent::ExecutionCompleted { execution: exec.clone() });
     }
 }
 
 async fn broadcast_system_metrics(state: AppState) {
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
-        
-        let active_executions = state.executions
+
+        let active_executions = state
+            .executions
             .iter()
             .filter(|e| e.status == ExecutionStatus::Running)
             .count();
-        
+
         let connected_clients = *state.connected_clients.read().await;
-        
+
         let metrics = SystemMetrics {
             cpu_usage: (fast_random() % 50) as f32,
             memory_usage: 30.0 + (fast_random() % 40) as f32,
@@ -1468,7 +1703,7 @@ async fn broadcast_system_metrics(state: AppState) {
             uptime_seconds: state.uptime_seconds(),
             total_executions: state.execution_counter.load(Ordering::SeqCst),
         };
-        
+
         let _ = state.event_tx.send(ServerEvent::SystemMetrics { metrics });
     }
 }
@@ -1500,7 +1735,7 @@ async fn load_sample_workflows(state: &AppState) {
             "settings": {}
         }),
     };
-    
+
     // Sample workflow 2: Multi-Agent System
     let sample2 = WorkflowInfo {
         id: "sample-multi-agent".to_string(),
@@ -1535,12 +1770,15 @@ async fn load_sample_workflows(state: &AppState) {
             "settings": {"concurrency": 3}
         }),
     };
-    
+
     // Sample workflow 3: Data Processing Pipeline
     let sample3 = WorkflowInfo {
         id: "sample-data-pipeline".to_string(),
         name: "Data Processing Pipeline".to_string(),
-        description: Some("A data processing workflow with conditional branching and parallel processing stages.".to_string()),
+        description: Some(
+            "A data processing workflow with conditional branching and parallel processing stages."
+                .to_string(),
+        ),
         node_count: 5,
         edge_count: 5,
         created_at: Utc::now(),
@@ -1567,19 +1805,19 @@ async fn load_sample_workflows(state: &AppState) {
             "settings": {"fail_fast": true}
         }),
     };
-    
+
     state.workflows.insert(sample1.id.clone(), sample1);
     state.workflows.insert(sample2.id.clone(), sample2);
     state.workflows.insert(sample3.id.clone(), sample3);
-    
+
     info!("Loaded {} sample workflows", state.workflows.len());
 }
 
 // Fast random number generator for simulation (not cryptographically secure)
 fn fast_random() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
     use std::cell::Cell;
-    
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     thread_local! {
         static RNG_STATE: Cell<u64> = Cell::new(
             SystemTime::now()
@@ -1588,7 +1826,7 @@ fn fast_random() -> u64 {
                 .as_nanos() as u64
         );
     }
-    
+
     RNG_STATE.with(|state| {
         let mut s = state.get();
         s ^= s >> 12;

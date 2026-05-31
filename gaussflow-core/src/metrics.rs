@@ -2,8 +2,8 @@
 
 use lazy_static::lazy_static;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{debug, error, info, warn, Level, instrument};
 use std::time::Instant;
+use tracing::{debug, error, info, instrument, warn, Level};
 
 lazy_static! {
     /// Global metrics registry
@@ -37,7 +37,8 @@ impl Metrics {
     #[instrument]
     pub fn record_node_execution(&self, duration: std::time::Duration) {
         self.nodes_executed.fetch_add(1, Ordering::Relaxed);
-        self.total_execution_time_ms.fetch_add(duration.as_millis() as u64, Ordering::Relaxed);
+        self.total_execution_time_ms
+            .fetch_add(duration.as_millis() as u64, Ordering::Relaxed);
     }
     /// Records a node failure
     #[instrument]
@@ -78,7 +79,7 @@ impl ScopeTimer {
             level: Level::DEBUG,
         }
     }
-    
+
     /// Sets the log level for this timer
     pub fn with_level(mut self, level: Level) -> Self {
         self.level = level;
@@ -90,7 +91,7 @@ impl Drop for ScopeTimer {
     fn drop(&mut self) {
         let elapsed = self.start.elapsed();
         let msg = format!("{} took {:?}", self.name, elapsed);
-        
+
         match self.level {
             Level::ERROR => error!("{}", msg),
             Level::WARN => warn!("{}", msg),
@@ -104,14 +105,14 @@ impl Drop for ScopeTimer {
 /// Initializes the tracing subscriber
 pub fn init_tracing(level: Option<&str>) {
     use tracing_subscriber::{fmt, EnvFilter};
-    
+
     let filter = match level {
         Some(level) => EnvFilter::new(level),
         None => EnvFilter::from_default_env()
             .add_directive("gaussflow_core=info".parse().unwrap())
             .add_directive("gaussflow_runtime=info".parse().unwrap()),
     };
-    
+
     fmt()
         .with_env_filter(filter)
         .with_span_events(fmt::format::FmtSpan::CLOSE)
@@ -132,23 +133,23 @@ pub fn get_metrics() -> String {
 mod tests {
     use super::*;
     use std::time::Duration;
-    
+
     #[test]
     fn test_metrics() {
         let metrics = Metrics::new();
-        
+
         metrics.record_node_execution(Duration::from_millis(100));
         metrics.record_node_failure();
         metrics.record_workflow_start();
-        
+
         assert_eq!(metrics.nodes_executed.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.nodes_failed.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.active_workflows.load(Ordering::Relaxed), 1);
-        
+
         metrics.record_workflow_end();
         assert_eq!(metrics.active_workflows.load(Ordering::Relaxed), 0);
     }
-    
+
     #[test]
     fn test_scope_timer() {
         let _timer = ScopeTimer::new("test_timer");
