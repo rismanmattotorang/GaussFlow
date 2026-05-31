@@ -39,17 +39,32 @@ making the rooms behind it real.
 
 *Objective: remove the things that are actively harmful or misleading.*
 
-- [x] **Rewrite the README and docs to reflect actual status** (this PR).
+- [ ] **Make `cargo build --workspace` pass — task #1, blocks everything.** Verified failures in
+      `gaussflow-runtime` (18 errors; tests cannot run until fixed):
+  - Remove the invalid `features = ["rocksdb"]` on the `gaussflow-core` path dependency
+    (`gaussflow-core` has no such feature), or add the feature to `gaussflow-core`.
+  - Gate `tracing`/`tracing-subscriber` usage behind `#[cfg(feature = "tracing")]`, or make the
+    deps non-optional (they are imported unconditionally in `lib.rs`/`handler.rs`/`planner.rs`).
+  - Declare the `metrics` feature in `gaussflow-runtime/Cargo.toml` (it is referenced by
+    `#[cfg(feature = "metrics")]` but not defined).
+  - Fix the `procfs` 0.14 API drift in `sys/linux.rs` (`Status` has no field `.0`).
+  - Document **`protoc`** as a build prerequisite (gRPC build scripts panic without it) and
+    install it in CI and dev setup.
+- [x] **Rewrite the README and docs to reflect actual status** (this PR), including the
+      verified build failure and the `protoc` prerequisite.
 - [ ] **Purge hardcoded secrets.** Remove `REDACTED` and `"REDACTED"` from
       `gaussflow-runtime/src/lib.rs`, `gaussflow-cli/src/database.rs`, `gaussflow-cli/src/config.rs`.
       Source credentials from environment variables / a secrets provider only.
 - [ ] **Rotate any real credentials** that may have been committed; scrub git history if needed.
-- [ ] **Add `.github/workflows/ci.yml`**: `cargo build`, `cargo test`, `cargo clippy -D warnings`,
-      `cargo fmt --check`, and `cargo audit` on every PR.
+- [ ] **Add `.github/workflows/ci.yml`**: install `protoc`, then `cargo build --workspace`,
+      `cargo test`, `cargo clippy -D warnings`, `cargo fmt --check`, and `cargo audit` on every PR.
+      (A green build gate would have caught the current compile failure.)
 - [ ] **Add `cargo-deny` / `cargo-audit`** for dependency and license scanning.
 - [ ] **Add a `LICENSE` file** (Apache-2.0 per README) and `SECURITY.md`.
 
-**Exit criteria:** no secrets in the tree; CI is green and gating; docs are honest.
+**Exit criteria:** `cargo build --workspace` and `cargo test --workspace` pass on a clean
+checkout (with `protoc` installed via CI); no secrets in the tree; CI is green and gating; docs
+are honest.
 
 ---
 

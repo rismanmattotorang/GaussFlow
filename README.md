@@ -18,11 +18,13 @@ shows you the plan, and — on your confirmation — deploys and runs it.*
 
 ---
 
-> **⚠️ Project status: Technology Preview (Alpha).**
-> GaussFlow's execution substrate — the typed DAG model, workflow parser, and a single-machine
-> Rust runtime — works today. The flagship **prompt-to-DAG synthesis layer** that defines the
-> product vision is **not yet implemented**; it is the #1 item on our roadmap. For an honest,
-> file-level breakdown of what is real versus aspirational, read the
+> **⚠️ Project status: Technology Preview (Alpha) — does not currently build from a clean checkout.**
+> GaussFlow's design — the typed DAG model and a single-machine Rust runtime — is in place, and
+> `gaussflow-core` compiles on its own. But **the workspace as committed does not compile**: the
+> `gaussflow-runtime` crate fails with feature/dependency errors, and the gRPC crates require an
+> undocumented `protoc` toolchain. The flagship **prompt-to-DAG synthesis layer** that defines the
+> product vision is **not yet implemented**. Fixing the build is the #1 item on our roadmap. For a
+> verified, file-level breakdown of what compiles versus what is aspirational, read the
 > **[Code Evaluation](docs/CODE_EVALUATION.md)**. For the architecture of the synthesis layer,
 > see the **[Synthesis Pipeline](docs/SYNTHESIS_PIPELINE.md)**. For the path to 1.0, see the
 > **[Production Roadmap](docs/PRODUCTION_ROADMAP.md)**.
@@ -97,13 +99,14 @@ capability stands today, evaluated against the product vision above.
 
 | Capability | Status | Notes |
 |---|---|---|
+| **Clean `cargo build --workspace`** | 🔴 **Broken** | `gaussflow-runtime` fails to compile (invalid `rocksdb` feature on the core dep; `tracing`/`metrics` feature-gating bugs; `procfs` API mismatch). Requires `protoc`. Roadmap Phase 0. |
 | **Prompt → DAG synthesis (the compiler)** | 🔴 **Planned — flagship** | The defining feature. No NL→graph code exists yet; design in [SYNTHESIS_PIPELINE.md](docs/SYNTHESIS_PIPELINE.md) |
 | **Confirm → Deploy → Run lifecycle** | 🔴 **Planned** | No confirmation/registration/deploy step exists yet |
-| Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core`, cycle/validation checks (the synthesis *target*) |
-| Topological single-machine execution | ✅ **Working** | `gaussflow-runtime`, Tokio-based (the synthesis *back-end*) |
-| LLM node (OpenAI Chat Completions) | ✅ **Working** | Reads `OPENAI_API_KEY` from env |
-| Resource control (CPU/GPU semaphores) | ✅ **Working** | Concurrency limits, per-node timeouts |
-| Retry with backoff (fixed/linear/exp) | ✅ **Working** | Per-node retry policy |
+| Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core` compiles and validates (cycle/type checks) — the synthesis *target* |
+| Topological single-machine execution | 🟠 **Present, not building** | `gaussflow-runtime` (Tokio-based) — code exists and is the intended back-end, but the crate does not currently compile |
+| LLM node (OpenAI Chat Completions) | 🟠 **Present, not building** | Real OpenAI call in `handler.rs`; blocked by the runtime build failure |
+| Resource control (CPU/GPU semaphores) | 🟡 **Partial** | Implemented in `gaussflow-core` (compiles); runtime wiring blocked by build |
+| Retry with backoff (fixed/linear/exp) | 🟡 **Partial** | Policy modeled; runtime wiring blocked by build |
 | Run persistence (SurrealDB) | 🟡 **Partial** | Hardcoded creds; needs config + graceful fallback |
 | CLI (validate / run / serve / config) | 🟡 **Partial** | Command scaffold present, wiring incomplete |
 | Web dashboard + REST/WebSocket API | 🟡 **Partial** | API surface exists; execution path is *simulated* |
@@ -115,12 +118,13 @@ capability stands today, evaluated against the product vision above.
 | RBAC, audit, SLA, compliance | 🔴 **Planned** | Config types defined; enforcement not implemented |
 | Distributed / K8s / edge execution | 🔴 **Planned** | Feature flags exist; runtime not implemented |
 
-Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
+Legend: ✅ Working · 🟡 Partial / scaffolded · 🟠 Code present but does not build · 🔴 Planned / Broken
 
-> **The honest summary:** GaussFlow today is a credible *execution substrate* with the *front
-> door* — the prompt-to-DAG compiler — not yet built. The substrate is the hard, valuable part
-> to get right, and it largely works. The roadmap is sequenced to build the synthesis layer on
-> top of a runtime we trust.
+> **The honest summary:** GaussFlow today is a *designed* execution substrate whose runtime crate
+> does not yet compile, with the *front door* — the prompt-to-DAG compiler — not built at all.
+> The core model (`gaussflow-core`) is real and compiles; the runtime is the right shape but needs
+> a build fix before any execution claim can be made. The roadmap therefore starts by making the
+> workspace build, then consolidates the engine, then builds the synthesis layer on top of it.
 
 ---
 
@@ -173,6 +177,8 @@ the runtime and emits the same `WorkflowSpec` the runtime already executes:
 
 ### Prerequisites
 - Rust 1.75+ and Cargo
+- **`protoc` (Protocol Buffers compiler)** — required by the gRPC build scripts
+  (`apt-get install protobuf-compiler`, `brew install protobuf`, or set `PROTOC`)
 - (Optional) An `OPENAI_API_KEY` for live LLM nodes
 - (Optional) A running [SurrealDB](https://surrealdb.com/) instance for run persistence
 
@@ -181,7 +187,8 @@ the runtime and emits the same `WorkflowSpec` the runtime already executes:
 ```bash
 git clone <your-fork-url> gaussflow
 cd gaussflow
-cargo build --workspace
+cargo build -p gaussflow-core   # ✅ compiles today
+cargo build --workspace         # ⚠️ currently fails in gaussflow-runtime — see roadmap Phase 0
 ```
 
 ### Define a workflow (today: the synthesis *output* format)
@@ -282,11 +289,16 @@ layer can only safely emit node types that the runtime actually executes — whi
 ## Development
 
 ```bash
-cargo build --workspace        # build everything
-cargo test --workspace         # run the test suite (~69 tests)
+cargo build -p gaussflow-core  # the core crate compiles today
+cargo build --workspace        # ⚠️ currently fails in gaussflow-runtime (roadmap Phase 0)
+cargo test --workspace         # ~69 tests exist but cannot run until the build is fixed
 cargo run --example simple_workflow -p gaussflow-core
 cargo bench -p gaussflow-runtime
 ```
+
+> The test suite (~69 functions) is a genuine asset, but it is gated behind the runtime build
+> failure: tests cannot currently execute workspace-wide. Restoring a green
+> `cargo build --workspace` + `cargo test --workspace` is the first roadmap milestone.
 
 See [`build.sh`](build.sh) and [`clean.sh`](clean.sh) for convenience scripts.
 

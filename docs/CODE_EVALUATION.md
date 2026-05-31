@@ -4,9 +4,10 @@
 **Date:** 2026-05-31
 **Scope:** Full workspace review of the `GaussFlow` repository, evaluated against the stated
 product vision (**prompt → DAG → confirm → deploy → run**).
-**Method:** Static reading of all crates and source files, plus targeted verification of key
-findings (hardcoded secrets, `todo!()`/`unimplemented!()` sites, simulated execution path, and
-the absence of any natural-language-to-graph code) by direct search.
+**Method:** Static reading of all crates and source files, targeted verification of key findings
+(hardcoded secrets, `todo!()`/`unimplemented!()` sites, simulated execution path, absence of any
+natural-language-to-graph code) by direct search, **and an actual `cargo build` of the workspace.**
+The build was attempted and its results are reported in §1.6.
 
 ---
 
@@ -32,7 +33,11 @@ a focused hardening effort (and a documentation reset) before it can be called p
 > is the *execution substrate* the synthesis layer would sit on top of. See §1.5.
 
 ### Top risks
-0. **The flagship capability is unbuilt.** There is no prompt-to-DAG synthesis, no confirmation
+0. **The workspace does not compile.** `cargo build --workspace` fails: `gaussflow-runtime` does
+   not build (18 errors), and the gRPC crates need an undocumented `protoc`. Until this is fixed,
+   *no* execution claim is verifiable and the test suite cannot run. This outranks every feature
+   gap. (§1.6 — verified by building.)
+0b. **The flagship capability is unbuilt.** There is no prompt-to-DAG synthesis, no confirmation
    step, and no deploy/register step. Without it, GaussFlow is a workflow *runtime*, not the
    "describe it and ship it" product it is positioned as. This is the strategic gap. (§1.5)
 1. **Hardcoded secrets in source** — a SurrealDB password (`REDACTED`) and a default JWT secret
@@ -78,9 +83,53 @@ consolidated to one model and one engine (see §4).
 
 ---
 
-## 2. What actually works today
+## 1.6 Build status (verified by compiling)
 
-These components are implemented to a usable (if not yet hardened) degree:
+The prior revision of this evaluation was static-only. This revision **attempted an actual
+build**, and the result is the most important correction to the record:
+
+> **`cargo build --workspace` fails.** `gaussflow-core` compiles on its own (`cargo build -p
+> gaussflow-core` → exit 0, 14 warnings). `gaussflow-runtime` **does not compile** — 18 errors,
+> exit 101 — which cascades to every crate that depends on it (CLI, web, py).
+
+Two classes of blocker, both verified:
+
+**A. Missing build toolchain (undocumented).**
+- A `tonic`/`prost-build` build script panics with *"Could not find `protoc` installation"*.
+  `protoc` is a hard build prerequisite for the gRPC surface but is not listed anywhere in the
+  README or docs. Installing `protobuf-compiler` clears this specific panic.
+
+**B. Real manifest/source bugs in `gaussflow-runtime`** (persist even with `protoc` installed):
+- **Invalid feature on the core dependency.** `gaussflow-runtime/Cargo.toml` declares
+  `gaussflow-core = { path = "../gaussflow-core", features = ["rocksdb"] }`, but `gaussflow-core`
+  has **no `rocksdb` feature** (its features are `http`, `gpu`, `k8s`, `bench`, `profiling`,
+  `metrics`). This breaks the dependency link → `error[E0432]: unresolved import gaussflow_core`
+  throughout the crate.
+- **Optional deps used unconditionally.** `tracing` and `tracing-subscriber` are declared
+  `optional = true`, yet `lib.rs`, `handler.rs`, and `planner.rs` `use` them without any
+  `#[cfg(feature = "tracing")]` gate → `error[E0433]: unresolved module tracing/tracing_subscriber`.
+- **Reference to an undeclared feature.** `lib.rs` guards a module with
+  `#[cfg(feature = "metrics")]`, but the runtime manifest declares no `metrics` feature
+  (compiler note: *expected `default`, `http`, `tokio-console`, `tracing`*).
+- **Dependency API drift.** `sys/linux.rs:20` does `procfs::process::Status…​.0`, but the pinned
+  `procfs` 0.14 `Status` type has no field `0` → `error[E0609]`.
+- Several `error[E0282]: type annotations needed` are downstream fallout of the above.
+
+**Implications for the rest of this report.** Findings that depend on *running* code (e.g. the
+exact runtime behavior of `execute`, the OpenAI handler, the web simulation) are assessed from
+source, not execution — because the binaries cannot currently be built or run. The README rows
+that previously read "✅ Working" for execution/LLM nodes have been corrected to
+"🟠 Present, not building." **Restoring a green `cargo build --workspace` is roadmap Phase 0,
+task #1.**
+
+---
+
+## 2. What actually works today (source-level)
+
+These components are implemented to a usable (if not yet hardened) degree **at the source level**.
+Note the caveat from §1.6: only `gaussflow-core` compiles today, so any row referencing
+`gaussflow-runtime` describes code that is *present and well-shaped but not currently buildable*
+— its runtime behavior has not been executed.
 
 | Area | File(s) | Assessment |
 |---|---|---|

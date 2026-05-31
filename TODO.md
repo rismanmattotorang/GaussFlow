@@ -1,6 +1,8 @@
 # GaussFlow Development Backlog
 
 > **⚠️ This backlog is aspirational and does NOT reflect the true state of the code.**
+> In fact the workspace **does not currently compile** (`gaussflow-runtime` fails to build; see
+> the evaluation §1.6), so most `[x]` items below cannot even be exercised.
 > Most items marked `[x]` below are *planned or stubbed*, not implemented. A file-level audit
 > ([`docs/CODE_EVALUATION.md`](docs/CODE_EVALUATION.md)) found that the flagship
 > **prompt → DAG synthesis** capability does not exist yet, most node types are passthrough
