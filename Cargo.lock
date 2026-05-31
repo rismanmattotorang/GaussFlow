@@ -2050,6 +2050,7 @@ dependencies = [
  "flate2",
  "gaussflow-core",
  "gaussflow-runtime",
+ "gaussflow-synth",
  "glob",
  "hyper 1.6.0",
  "indexmap 2.9.0",
@@ -2198,6 +2199,20 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "gaussflow-synth"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "gaussflow-core",
+ "gaussflow-runtime",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

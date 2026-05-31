@@ -13,6 +13,25 @@ use super::AppState;
 // Command structures
 
 #[derive(Args, Debug)]
+pub struct SynthCommand {
+    /// Natural-language description of the workflow to build
+    #[arg(value_name = "PROMPT")]
+    pub prompt: String,
+
+    /// Planning model (use a `mock*` model name for offline experiments)
+    #[arg(long, default_value = "gpt-4o-mini")]
+    pub model: String,
+
+    /// Deploy and run the synthesized workflow after showing the plan
+    #[arg(long)]
+    pub run: bool,
+
+    /// JSON input to pass to the run (used with --run)
+    #[arg(long)]
+    pub input: Option<String>,
+}
+
+#[derive(Args, Debug)]
 pub struct ValidateCommand {
     /// Path to the workflow JSON file
     #[arg(value_name = "WORKFLOW")]
@@ -479,6 +498,51 @@ pub async fn run_workflow(cmd: RunCommand, state: AppState, pb: ProgressBar) -> 
                     .map_err(|e| anyhow::anyhow!("Output serialization error: {}", e))?
             );
         }
+    }
+
+    Ok(())
+}
+
+/// Synthesize a workflow from a natural-language prompt: prompt → DAG → (confirm) → deploy → run.
+pub async fn synthesize_workflow(
+    cmd: SynthCommand,
+    _state: AppState,
+    pb: ProgressBar,
+) -> Result<()> {
+    pb.set_message("Synthesizing workflow from prompt...");
+
+    let provider = gaussflow_runtime::provider::provider_for(&cmd.model);
+    let synth = gaussflow_synth::Synthesizer::new(provider.as_ref()).with_model(&cmd.model);
+    let request = gaussflow_synth::SynthesisRequest::new(&cmd.prompt);
+
+    let result = synth
+        .synthesize(&request)
+        .await
+        .map_err(|e| anyhow::anyhow!("Synthesis failed: {e}"))?;
+
+    // Confirmation view: show the human-readable plan and the concrete workflow it compiled to.
+    pb.set_message("Synthesis complete");
+    println!("\n{}", style("Proposed plan").bold().underlined());
+    println!("{}", result.explanation);
+    println!("{}", style("Workflow specification").bold().underlined());
+    println!("{}", serde_json::to_string_pretty(&result.spec)?);
+
+    if cmd.run {
+        pb.set_message("Deploying and running the synthesized workflow...");
+        let input = cmd
+            .input
+            .map_or(Ok(serde_json::Value::Null), |i| serde_json::from_str(&i))
+            .context("--input is not valid JSON")?;
+        let output = gaussflow_synth::run(&result, input)
+            .await
+            .map_err(|e| anyhow::anyhow!("Run failed: {e}"))?;
+        println!("\n{}", style("Run result").bold().underlined());
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!(
+            "\n{}",
+            style("Re-run with --run to deploy and execute this workflow.").dim()
+        );
     }
 
     Ok(())

@@ -1,7 +1,12 @@
 # GaussFlow — The Synthesis Pipeline
 
 **Owner:** Gaussian Technologies
-**Status:** Design (not yet implemented) — this is the product's defining capability.
+**Status:** **v1 implemented** in the `gaussflow-synth` crate — intake, Plan IR, capability
+catalog, lowering, validation + bounded self-repair, and a deploy/run entrypoint, exercised
+end-to-end offline (`gaussflow-synth/tests/synthesize.rs`) and exposed via `gaussflow synth`.
+Still design-stage: rich confirm/edit UX, cost/latency estimates, durable deploy, and a benchmark
+suite. The stages below describe the full target; see `PRODUCTION_ROADMAP.md` Phase S for what's
+done vs remaining.
 **Companion documents:** [`CODE_EVALUATION.md`](CODE_EVALUATION.md) · [`PRODUCTION_ROADMAP.md`](PRODUCTION_ROADMAP.md)
 
 ---

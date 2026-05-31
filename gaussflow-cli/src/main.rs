@@ -63,6 +63,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Synthesize a workflow from a natural-language prompt (prompt → DAG → deploy → run)
+    Synth(SynthCommand),
+
     /// Validate workflow specifications
     Validate(ValidateCommand),
 
@@ -199,6 +202,13 @@ async fn init_app_state(cli: &Cli) -> Result<AppState> {
 
 async fn execute_command(command: Commands, state: AppState) -> Result<()> {
     match command {
+        Commands::Synth(cmd) => {
+            let pb = create_progress_bar("Synthesizing workflow");
+            let result = synthesize_workflow(cmd, state, pb.clone()).await;
+            pb.finish_and_clear();
+            result
+        }
+
         Commands::Validate(cmd) => {
             let pb = create_progress_bar("Validating workflow");
             let result = validate_workflow(cmd, state, pb.clone()).await;

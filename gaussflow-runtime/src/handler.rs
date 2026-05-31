@@ -36,14 +36,18 @@ impl NodeHandler for LlmCallHandler {
         node: &NodeSpec,
         _input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-        // Get model from config or use default
+        // Resolve the model from (in order): typed config, a generic config map, or `params`.
+        // The `params` fallback lets a uniform `{type, params}` node shape (as produced by the
+        // synthesis layer) work without special-casing llm_call.
+        let params_model = node.params.get("model").and_then(|m| m.as_str());
         let model = match &node.config {
             NodeConfig::LlmCall { model, .. } => model.as_str(),
             NodeConfig::Generic(map) => map
                 .get("model")
                 .and_then(|m| m.as_str())
+                .or(params_model)
                 .unwrap_or("gpt-3.5-turbo"),
-            _ => "gpt-3.5-turbo",
+            _ => params_model.unwrap_or("gpt-3.5-turbo"),
         };
 
         // Get temperature from config or params

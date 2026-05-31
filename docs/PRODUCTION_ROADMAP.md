@@ -162,42 +162,48 @@ remaining provider/streaming items are enhancements, not blockers.
 
 ---
 
-## Phase S — The synthesis layer: prompt → DAG → confirm → deploy → run (Weeks 9–16) 🧠 the product
+## Phase S — The synthesis layer: prompt → DAG → confirm → deploy → run 🧠 the product — first version shipped
 
 *Objective: deliver GaussFlow's defining capability — turn a natural-language prompt into a
 validated, runnable agent graph that the user confirms before it ships. Full design in
-[`SYNTHESIS_PIPELINE.md`](SYNTHESIS_PIPELINE.md). This phase overlaps Phases 2–4: it can begin as
-soon as a trustworthy subset of node types and a single engine exist, and matures alongside them.*
+[`SYNTHESIS_PIPELINE.md`](SYNTHESIS_PIPELINE.md).*
 
-This is the highest-value phase. Everything before it exists to make this phase safe to ship.
+This is the highest-value phase. Everything before it existed to make this phase safe to ship.
+**A working first version now exists** in the `gaussflow-synth` crate, exercised end-to-end offline.
 
-- [ ] **New `gaussflow-synth` crate.** Houses intake, the Plan IR, lowering, and the repair loop.
-      Keep it cleanly separated from `core`/`runtime`.
-- [ ] **Prompt intake → `SynthesisRequest`.** Capture the goal plus constraints (cost, latency,
-      allowed tools, schedule, data scope) as explicit, enforceable guards.
-- [ ] **Intent extraction → Plan IR.** LLM with structured output produces an abstract capability
-      graph, *not* raw `WorkflowSpec`. Drive generation from a **capability catalog derived from
-      actually-registered runtime handlers** — never from the `NodeType` enum (no inventing stubs).
-- [ ] **Lowering: Plan IR → `WorkflowSpec`.** Map capabilities to concrete nodes, wire edges from
-      data dependencies, assign resources/retry, and select models by cost/quality policy.
-- [ ] **Validation gate + bounded self-repair.** Every synthesized spec must pass
-      `TypeSafeDag::from_json`; on failure, feed validator errors back for ≤ N repair iterations,
-      then fail loudly. Restrict emitted node types to those with real handlers (gates on Phase 2).
-- [ ] **Confirmation UX (human-in-the-loop).** Render the proposed DAG (graph + JSON), show a
-      per-node plain-language explanation with provenance to the prompt, and an estimated
-      cost/latency/side-effect summary. Support edit / regenerate-with-feedback / confirm. Editing
-      re-validates. **Nothing deploys without explicit confirmation.**
-- [ ] **Deploy step.** Persist the confirmed, versioned, immutable spec; resolve providers and
-      secrets from the secrets manager; reserve quotas; register triggers; emit a deployment handle.
-- [ ] **Run + trace-back.** Execute on the canonical runtime; link every run to its originating
-      prompt for auditability.
-- [ ] **Synthesis benchmark suite.** A prompt corpus with expected capabilities; track
-      first-pass validation rate, repair iterations, and run-success rate as regression gates.
+- [x] **New `gaussflow-synth` crate.** ✅ Houses intake, the Plan IR (`plan.rs`), the capability
+      catalog, lowering, the synthesize/repair orchestrator, and a deploy/run entrypoint. Cleanly
+      separated; depends on `core` (validator) and `runtime` (provider + executor).
+- [x] **Prompt intake → `SynthesisRequest`.** ✅ Captures the goal plus `Constraints`
+      (`allowed_capabilities`). (Cost/latency/schedule guards remain to be added.)
+- [x] **Intent extraction → Plan IR.** ✅ The LLM (`LlmProvider`) produces an abstract capability
+      graph parsed into `PlanIR` — not raw `WorkflowSpec`. Generation is driven from a
+      **capability catalog kept in lockstep with the runtime handlers** (`catalog.rs`), so it
+      cannot propose a node type the runtime only stubs.
+- [x] **Lowering: Plan IR → `WorkflowSpec`.** ✅ Deterministic `lower()` maps each capability to a
+      concrete `{ id, type, params }` node and wires edges from `depends_on` (with branch labels
+      from each step's `edges`). (Resource/retry assignment + cost-based model selection remain.)
+- [x] **Validation gate + bounded self-repair.** ✅ Every synthesized spec must pass
+      `TypeSafeDag::from_json`; on failure (or an unsupported capability), the validator error is
+      fed back for ≤ N repair iterations, then fails loudly (`SynthError::Unconverged`).
+- [x] **Run + deploy entrypoint.** ✅ `gaussflow_synth::run` executes a confirmed spec on the
+      canonical runtime (no database). CLI: `gaussflow synth "<prompt>" [--run]`.
+- [x] **Confirmation (first cut).** ✅ `SynthesisResult::explanation` renders a per-step,
+      provenance-bearing plan; the CLI prints it and the spec before `--run`. *Remaining: a rich
+      edit/regenerate UX and cost/latency/side-effect estimates.*
+- [ ] **Deploy hardening.** Persist confirmed, versioned, immutable specs; resolve providers and
+      secrets from the secrets manager; reserve quotas; register triggers; trace runs back to the
+      originating prompt.
+- [ ] **Synthesis benchmark suite.** A prompt corpus with expected capabilities; track first-pass
+      validation rate, repair iterations, and run-success rate as regression gates.
+- [ ] **Real planning provider.** Planning needs a capable LLM; wire Anthropic/OpenAI for live use
+      (offline tests use a scripted stub provider).
 
-**Exit criteria:** a natural-language prompt produces a `WorkflowSpec` that passes validation
-unmodified ≥ 90% of the time (with bounded repair), uses only runtime-supported node types, can be
-reviewed/edited/confirmed, and — once confirmed — deploys reproducibly and runs end-to-end with
-real outputs. (See the acceptance criteria in [`SYNTHESIS_PIPELINE.md`](SYNTHESIS_PIPELINE.md).)
+**Exit criteria (first version ✅):** a prompt produces a `WorkflowSpec` that passes the same
+validator a hand-authored graph does, uses only runtime-supported node types (with bounded
+repair), is rendered for confirmation, and — once confirmed — runs end-to-end with real outputs.
+Proven offline by `gaussflow-synth/tests/synthesize.rs`. **Remaining:** confirmation/edit UX, cost
+estimates, deploy hardening, a benchmark suite, and a production planning provider.
 
 ---
 

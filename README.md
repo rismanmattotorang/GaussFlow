@@ -23,8 +23,11 @@ shows you the plan, and — on your confirmation — deploys and runs it.*
 > secrets are environment-sourced, the core is consolidated to one model + one engine that runs
 > with **no database**, and **all eight node types are implemented** (llm_call, agent, ensemble,
 > router, subgraph, data_processor, conditional, parallel) with conditional/router branch skipping
-> and ensemble fan-in. The flagship **prompt-to-DAG synthesis layer** that defines the product
-> vision is **not yet implemented** and is the next major milestone. For a verified, file-level
+> and ensemble fan-in. A **first version of the flagship prompt-to-DAG synthesis layer**
+> (`gaussflow-synth`) now exists: a prompt compiles to a Plan IR, lowers to a `WorkflowSpec`,
+> passes the same validator a hand-authored graph does (with bounded self-repair), and runs on the
+> real engine — proven end-to-end offline. (Live planning needs a capable LLM; the
+> confirmation/edit UX and durable deploy are still being built.) For a verified, file-level
 > breakdown of what works versus what is aspirational, read the
 > **[Code Evaluation](docs/CODE_EVALUATION.md)**. For the architecture of
 > the synthesis layer, see the **[Synthesis Pipeline](docs/SYNTHESIS_PIPELINE.md)**. For the path
@@ -101,8 +104,8 @@ capability stands today, evaluated against the product vision above.
 | Capability | Status | Notes |
 |---|---|---|
 | **Clean `cargo build --workspace`** | ✅ **Working** | Builds + tests green; gated in CI. Requires `protoc` (see prerequisites). |
-| **Prompt → DAG synthesis (the compiler)** | 🔴 **Planned — flagship** | The defining feature. No NL→graph code exists yet; design in [SYNTHESIS_PIPELINE.md](docs/SYNTHESIS_PIPELINE.md) |
-| **Confirm → Deploy → Run lifecycle** | 🔴 **Planned** | No confirmation/registration/deploy step exists yet |
+| **Prompt → DAG synthesis (the compiler)** | 🟡 **Working (v1)** | `gaussflow-synth`: prompt → Plan IR → lower → validate → bounded repair. Capability catalog kept in lockstep with the runtime. Needs a capable LLM for planning; offline-tested with a scripted provider |
+| **Confirm → Deploy → Run lifecycle** | 🟡 **Working (v1)** | Plan + spec rendered for review; `gaussflow synth "<prompt>" --run` deploys+runs on the real engine. Rich edit UX, cost estimates, durable deploy still to come |
 | Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core` compiles and validates (cycle/type checks) — the synthesis *target* |
 | Topological single-machine execution | ✅ **Working** | One canonical engine (`gaussflow_runtime::execute_with_store`); runs with **no database** and returns real per-node outputs |
 | Run with **no external dependencies** | ✅ **Working** | `RunStore` trait + in-memory default; SurrealDB is opt-in via `GAUSSFLOW_RUN_STORE=surreal` |
@@ -127,14 +130,14 @@ capability stands today, evaluated against the product vision above.
 
 Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 
-> **The honest summary:** Phase 0 ✅ (builds + tests green, secrets removed, CI-gated) and Phase 1 ✅
-> (one data model, one execution engine, runs with **no database** and returns real outputs) are
-> done. Phase 2 is **in progress**: the LLM provider abstraction, the deterministic compute nodes
-> done, and **Phase 2's exit criterion is met** — all eight node types (`llm_call`, `agent`,
-> `ensemble`, `router`, `subgraph`, `data_processor`, `conditional`, `parallel`) have real,
-> tested implementations, including conditional/router branch skipping and ensemble fan-in. The
-> remaining Phase 2 items are enhancements (more providers, streaming). Next is the *front door* —
-> the prompt-to-DAG compiler — on a runtime we now trust. The roadmap is sequenced exactly that way.
+> **The honest summary:** Phase 0 ✅ (builds + tests green, secrets removed, CI-gated), Phase 1 ✅
+> (one data model, one execution engine, runs with **no database** and returns real outputs), and
+> Phase 2 ✅ (all eight node types real: `llm_call`, `agent`, `ensemble`, `router`, `subgraph`,
+> `data_processor`, `conditional`, `parallel` — with conditional/router branch skipping and
+> ensemble fan-in). A **v1 of the flagship synthesis layer** (`gaussflow-synth`) compiles a prompt
+> into a validated, runnable graph end-to-end. What's left: hardening synthesis (rich confirm/edit
+> UX, cost estimates, durable deploy, a production planning provider) plus the Phase 3+ items
+> (persistence, observability, security, scale-out). The roadmap is sequenced exactly that way.
 
 ---
 
@@ -145,8 +148,8 @@ the runtime and emits the same `WorkflowSpec` the runtime already executes:
 
 ```
             ┌───────────────────────────────────────────────────────────┐
-            │   Synthesis layer  (PLANNED — the product's front door)     │
-            │   prompt → intent → DAG synthesis → validate → confirm      │
+            │   gaussflow-synth  (v1 — the product's front door)          │
+            │   prompt → Plan IR → lower → validate → (repair) → confirm   │
             └───────────────────────────────┬───────────────────────────┘
                                             │  emits a validated WorkflowSpec
             ┌───────────────────────────────▼───────────────────────────┐
@@ -171,7 +174,8 @@ the runtime and emits the same `WorkflowSpec` the runtime already executes:
 | Crate | Role | Read more |
 |---|---|---|
 | **gaussflow-core** | Graph model, workflow spec, validation, scheduling primitives | [README](gaussflow-core/README.md) |
-| **gaussflow-runtime** | Async execution engine and node handlers | [README](gaussflow-runtime/README.md) |
+| **gaussflow-runtime** | Async execution engine, node handlers, LLM providers | [README](gaussflow-runtime/README.md) |
+| **gaussflow-synth** | Prompt → DAG synthesis (Plan IR, lowering, validate/repair) | — |
 | **gaussflow-cli** | `gaussflow` command-line tool | [README](gaussflow-cli/README.md) |
 | **gaussflow-web** | REST/WebSocket API + dashboard | [README](gaussflow-web/README.md) |
 | **gaussflow-tui** | Terminal monitoring UI | [README](gaussflow-tui/README.md) |
@@ -221,7 +225,20 @@ cargo test  --workspace   # ✅ green
 }
 ```
 
-### Validate and run
+### Synthesize from a prompt (the flagship loop)
+
+```bash
+# Describe the outcome; GaussFlow compiles it to a DAG, shows the plan, and (with --run) runs it.
+# Live planning needs a capable model, e.g. OpenAI:
+export OPENAI_API_KEY=sk-...
+cargo run -p gaussflow-cli -- synth "Extract the text field, then summarize it" --run
+```
+
+This prints the proposed plan + workflow spec (the confirmation view), then — with `--run` —
+deploys and executes it on the same engine a hand-authored workflow uses. The synthesized spec is
+held to the *same* validation as any other workflow.
+
+### Validate and run a hand-authored workflow
 
 ```bash
 # Validate a workflow specification

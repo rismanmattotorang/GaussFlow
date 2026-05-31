@@ -82,3 +82,4 @@ petgraph = "0.6"
 # Internal crates
 gaussflow-core = { path = "../gaussflow-core" }
 gaussflow-runtime = { path = "../gaussflow-runtime" }
+gaussflow-synth = { path = "../gaussflow-synth" }
