@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use gaussflow_core::model::NodeType;
 use gaussflow_core::TypeSafeDag;
-use gaussflow_runtime::handler::NodeHandler;
+use gaussflow_runtime::handler::{NodeHandler, NodeInput};
 use gaussflow_runtime::{execute_with, InMemoryRunStore};
 use proptest::prelude::*;
 use serde_json::{json, Value};
@@ -24,7 +24,7 @@ impl NodeHandler for RecordingHandler {
     async fn execute(
         &self,
         node: &gaussflow_core::model::NodeSpec,
-        _input: Value,
+        _input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         self.order.lock().unwrap().push(node.id.clone());
         Ok(json!({ "id": node.id }))

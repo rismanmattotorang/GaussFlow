@@ -175,14 +175,18 @@ pub async fn execute_with(
             .edges_directed(nx, petgraph::Direction::Incoming)
             .collect();
 
-        let (is_active, merged_input) = if incoming.is_empty() {
+        let (is_active, node_input) = if incoming.is_empty() {
             (
                 true,
-                outputs.get("input").cloned().unwrap_or_else(|| json!({})),
+                handler::NodeInput {
+                    merged: outputs.get("input").cloned().unwrap_or_else(|| json!({})),
+                    sources: Vec::new(),
+                },
             )
         } else {
             let mut active = false;
             let mut merged = json!({});
+            let mut sources: Vec<(String, Value)> = Vec::new();
             for e in &incoming {
                 let src_id = dag.graph[e.source()].id.clone();
                 if !active_set.contains(&src_id) {
@@ -191,14 +195,17 @@ pub async fn execute_with(
                 let src_out = outputs.get(&src_id);
                 if edge_taken(&e.weight().on, src_out) {
                     active = true;
-                    if let Some(obj) = src_out.and_then(|o| o.as_object()) {
-                        for (k, v) in obj {
-                            merged[k] = v.clone();
+                    if let Some(out) = src_out {
+                        if let Some(obj) = out.as_object() {
+                            for (k, v) in obj {
+                                merged[k] = v.clone();
+                            }
                         }
+                        sources.push((src_id, out.clone()));
                     }
                 }
             }
-            (active, merged)
+            (active, handler::NodeInput { merged, sources })
         };
 
         if !is_active {
@@ -230,7 +237,7 @@ pub async fn execute_with(
                     .unwrap_or(60_000);
                 let exec_res = tokio::time::timeout(
                     Duration::from_millis(timeout_ms),
-                    handler.execute(&n_ref, merged_input.clone()),
+                    handler.execute(&n_ref, node_input.clone()),
                 )
                 .await;
                 match exec_res {

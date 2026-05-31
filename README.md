@@ -108,6 +108,7 @@ capability stands today, evaluated against the product vision above.
 | LLM node + provider abstraction | ✅ **Working** | `LlmProvider` trait; OpenAI provider + deterministic offline `MockProvider` (no API key needed for `mock*` models). Anthropic/Ollama planned |
 | Data-processor / conditional nodes | ✅ **Working** | Real deterministic transforms (`extract`/`set`) and comparisons (`eq`/`gt`/…); tested offline |
 | Conditional/router branching | ✅ **Working** | Engine traverses edges by `on` label and skips untaken branches; `router` selects by input field; `subgraph` runs a nested workflow |
+| Ensemble fan-in (named ports) | ✅ **Working** | Handlers receive per-predecessor outputs; `ensemble` aggregates via `collect`/`first`/`vote` |
 | Resource control (CPU/GPU semaphores) | ✅ **Working** | Concurrency limits + per-node timeouts in the executor |
 | Retry with backoff (fixed/linear/exp) | ✅ **Working** | Per-node retry policy applied by the executor |
 | Run persistence (SurrealDB) | 🟡 **Partial** | Env-sourced creds; opt-in backend behind the `RunStore` trait |
@@ -115,7 +116,7 @@ capability stands today, evaluated against the product vision above.
 | Web dashboard + REST/WebSocket API | 🟡 **Partial** | API surface exists; execution path is *simulated* |
 | Python bindings (PyO3) | 🟡 **Partial** | `validate` + async `execute` exposed |
 | Terminal UI (TUI) | 🟡 **Partial** | Monitoring UI scaffold |
-| Agent / ensemble / parallel nodes | 🟡 **In progress** | `ensemble` needs per-predecessor inputs; `agent` needs a tool loop; `parallel` still a stub |
+| Agent / parallel nodes | 🟡 **In progress** | `agent` needs a tool/reasoning loop; `parallel` still a stub |
 | Content-addressable artifact store | 🔴 **Planned** | In-memory store works; SurrealDB store is a stub |
 | Distributed checkpointing & time-travel | 🔴 **Planned** | Types defined; backend not implemented |
 | RBAC, audit, SLA, compliance | 🔴 **Planned** | Config types defined; enforcement not implemented |
@@ -126,10 +127,11 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 > **The honest summary:** Phase 0 ✅ (builds + tests green, secrets removed, CI-gated) and Phase 1 ✅
 > (one data model, one execution engine, runs with **no database** and returns real outputs) are
 > done. Phase 2 is **in progress**: the LLM provider abstraction, the deterministic compute nodes
-> (data-processor, conditional), conditional/router **edge traversal with branch skipping**, and
-> `subgraph` (nested workflows) are real and tested; `ensemble`/`agent`/`parallel` still need
-> deeper support (per-predecessor inputs, tool loops). The *front door* — the prompt-to-DAG
-> compiler — comes after, on a runtime we now trust. The roadmap is sequenced exactly that way.
+> (data-processor, conditional), conditional/router **edge traversal with branch skipping**,
+> `subgraph` (nested workflows), and `ensemble` fan-in (via per-predecessor "named ports") are
+> real and tested; only `agent` (tool loop) and `parallel` remain. The *front door* — the
+> prompt-to-DAG compiler — comes after, on a runtime we now trust. The roadmap is sequenced
+> exactly that way.
 
 ---
 
@@ -287,8 +289,9 @@ between the prompt-to-DAG compiler and the runtime:
 Supported node types in the core model: `llm_call`, `agent`, `ensemble`, `router`, `subgraph`,
 `data_processor`, `conditional`, `parallel`. Implemented today: `llm_call` (via the provider
 abstraction), `data_processor` (`extract`/`set`/`passthrough`), `conditional` (comparisons),
-`router` (field-based routing), and `subgraph` (nested workflow). `agent`/`ensemble`/`parallel`
-are still stubs pending the engine work noted in the status table above. The synthesis
+`router` (field-based routing), `subgraph` (nested workflow), and `ensemble`
+(`collect`/`first`/`vote`). `agent` and `parallel` are still stubs pending the work noted in the
+status table above. The synthesis
 layer can only safely emit node types that the runtime actually executes — which is why
 "make the node types real" precedes "ship the compiler" on the roadmap.
 

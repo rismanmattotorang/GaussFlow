@@ -139,9 +139,13 @@ complete.**
       (cost/capability) remains future work.*
 - [x] **Subgraph node.** ✅ `SubgraphHandler` runs an inline nested workflow on a fresh in-memory
       engine and surfaces its result. (Dispatch no longer aliases Subgraph to the agent stub.)
-- [ ] **Ensemble node.** Needs per-predecessor inputs (named ports) — the engine currently
-      shallow-merges all predecessor outputs into one object, which is lossy for fan-in. Add
-      per-predecessor inputs, then pluggable aggregation (vote / concat / reduce).
+- [x] **Per-predecessor inputs (named ports).** ✅ Engine prerequisite for fan-in: the
+      `NodeHandler` trait now receives `NodeInput { merged, sources }`, where `sources` is each
+      taken predecessor's `(id, output)` individually (the shallow `merged` view is lossy when
+      predecessors share keys).
+- [x] **Ensemble node.** ✅ `EnsembleHandler` aggregates its members via `strategy`:
+      `collect` (default), `first`, and `vote` (majority over a `field`, with full tally). Covered
+      by the `ensemble` tests.
 - [ ] **Agent node.** A real tool-use/reasoning loop with a bounded step budget (on the provider
       abstraction).
 - [ ] **Parallel node.** Currently a passthrough stub.
@@ -150,7 +154,7 @@ complete.**
 
 **Exit criteria:** every node type in `NodeType` either has a real implementation or is removed
 from the public enum and docs. **Done so far:** `llm_call`, `data_processor`, `conditional`,
-`router`, `subgraph`. **Remaining:** `ensemble`, `agent`, `parallel`.
+`router`, `subgraph`, `ensemble`. **Remaining:** `agent`, `parallel`.
 
 ---
 

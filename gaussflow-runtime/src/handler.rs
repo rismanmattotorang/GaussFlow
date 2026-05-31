@@ -2,13 +2,28 @@ use crate::provider::{provider_for, CompletionRequest};
 use async_trait::async_trait;
 use gaussflow_core::model::{NodeConfig, NodeSpec, NodeType};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
+
+/// Input delivered to a node handler.
+///
+/// `merged` is a shallow merge of all taken predecessors' outputs (or the run input for source
+/// nodes) — convenient for the common single-input case. `sources` carries each taken
+/// predecessor's `(node_id, output)` individually ("named ports"), which fan-in nodes such as
+/// `ensemble` need because the merge is lossy when predecessors share output keys.
+#[derive(Debug, Clone, Default)]
+pub struct NodeInput {
+    /// Shallow merge of upstream outputs (or the run input for source nodes).
+    pub merged: Value,
+    /// Each taken predecessor's `(node_id, output)`, in edge order.
+    pub sources: Vec<(String, Value)>,
+}
 
 #[async_trait]
 pub trait NodeHandler: Send + Sync {
     async fn execute(
         &self,
         node: &NodeSpec,
-        _input: Value,
+        input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>>;
 }
 
@@ -19,7 +34,7 @@ impl NodeHandler for LlmCallHandler {
     async fn execute(
         &self,
         node: &NodeSpec,
-        _input: Value,
+        _input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         // Get model from config or use default
         let model = match &node.config {
@@ -74,11 +89,11 @@ impl NodeHandler for AgentHandler {
     async fn execute(
         &self,
         node: &NodeSpec,
-        _input: Value,
+        input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         Ok(json!({
             "agent": node.id,
-            "state": _input
+            "state": input.merged,
         }))
     }
 }
@@ -87,16 +102,62 @@ impl NodeHandler for AgentHandler {
 pub struct EnsembleHandler;
 #[async_trait]
 impl NodeHandler for EnsembleHandler {
+    /// Aggregates the outputs of its predecessors ("members") with a configurable `strategy`:
+    /// - `collect` (default): emit all member outputs as an array plus a `count`.
+    /// - `first`: emit the first member's output.
+    /// - `vote`: majority vote over each member's `field` value (set via the `field` param);
+    ///   emits the `winner` (the most common value) and the full `tally`.
     async fn execute(
         &self,
         node: &NodeSpec,
-        _input: Value,
+        input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-        let out = json!({
-            "ensemble": node.id,
-            "children": _input
-        });
-        Ok(out)
+        let strategy = node
+            .params
+            .get("strategy")
+            .and_then(|v| v.as_str())
+            .unwrap_or("collect");
+
+        let members: Vec<Value> = input.sources.iter().map(|(_, out)| out.clone()).collect();
+
+        match strategy {
+            "first" => Ok(json!({
+                "ensemble": node.id,
+                "strategy": "first",
+                "result": members.first().cloned().unwrap_or(Value::Null),
+            })),
+            "vote" => {
+                let field = node
+                    .params
+                    .get("field")
+                    .and_then(|v| v.as_str())
+                    .ok_or("ensemble 'vote' requires a string 'field' param")?;
+                let mut tally: BTreeMap<String, usize> = BTreeMap::new();
+                for out in &members {
+                    if let Some(v) = out.get(field) {
+                        let key = match v {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        *tally.entry(key).or_insert(0) += 1;
+                    }
+                }
+                // Highest count wins; ties broken by the (sorted) key for determinism.
+                let winner = tally.iter().max_by_key(|(_, &c)| c).map(|(k, _)| k.clone());
+                Ok(json!({
+                    "ensemble": node.id,
+                    "strategy": "vote",
+                    "winner": winner,
+                    "tally": tally,
+                }))
+            }
+            _ => Ok(json!({
+                "ensemble": node.id,
+                "strategy": "collect",
+                "count": members.len(),
+                "members": members,
+            })),
+        }
     }
 }
 
@@ -112,7 +173,7 @@ impl NodeHandler for RouterHandler {
     async fn execute(
         &self,
         node: &NodeSpec,
-        input: Value,
+        input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         let field = node
             .params
@@ -121,7 +182,7 @@ impl NodeHandler for RouterHandler {
             .ok_or("router requires a string 'field' param")?;
 
         // Normalize the looked-up value to a string key (strings stay as-is; others via Display).
-        let key = match input.get(field) {
+        let key = match input.merged.get(field) {
             Some(Value::String(s)) => s.clone(),
             Some(other) => other.to_string(),
             None => String::new(),
@@ -154,11 +215,11 @@ pub struct SubgraphHandler;
 #[async_trait]
 impl NodeHandler for SubgraphHandler {
     /// Executes an inline nested workflow (the `workflow` param, a full workflow spec object) on a
-    /// fresh in-memory engine, passing this node's input through as the nested run's input.
+    /// fresh in-memory engine, passing this node's merged input through as the nested run's input.
     async fn execute(
         &self,
         node: &NodeSpec,
-        input: Value,
+        input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         let wf = node
             .params
@@ -169,7 +230,7 @@ impl NodeHandler for SubgraphHandler {
             .map_err(|e| format!("subgraph: invalid nested workflow: {e}"))?;
 
         let store = crate::InMemoryRunStore::new();
-        let result = crate::execute_with_store(dag, input, &store).await?;
+        let result = crate::execute_with_store(dag, input.merged, &store).await?;
 
         Ok(json!({
             "subgraph": node.id,
@@ -192,8 +253,9 @@ impl NodeHandler for DataProcessorHandler {
     async fn execute(
         &self,
         node: &NodeSpec,
-        input: Value,
+        input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let data = input.merged;
         let op = node
             .params
             .get("op")
@@ -207,10 +269,10 @@ impl NodeHandler for DataProcessorHandler {
                     .get("field")
                     .and_then(|v| v.as_str())
                     .ok_or("data_processor 'extract' requires a string 'field' param")?;
-                input.get(field).cloned().unwrap_or(Value::Null)
+                data.get(field).cloned().unwrap_or(Value::Null)
             }
             "set" => {
-                let mut merged = input.clone();
+                let mut merged = data.clone();
                 if let (Some(obj), Some(patch)) = (
                     merged.as_object_mut(),
                     node.params.get("value").and_then(|v| v.as_object()),
@@ -221,7 +283,7 @@ impl NodeHandler for DataProcessorHandler {
                 }
                 merged
             }
-            _ => input,
+            _ => data,
         };
 
         Ok(json!({
@@ -242,14 +304,12 @@ impl NodeHandler for ConditionalHandler {
     ///
     /// Params: `field` (path into the input object), `op` (`eq`|`ne`|`gt`|`lt`|`ge`|`le`), and
     /// `value` to compare against. Numbers compare numerically; `eq`/`ne` also work for any JSON
-    /// value. Emits `{ matched, branch }` where `branch` is `"true"`/`"false"`.
-    ///
-    /// NOTE: this computes the decision; engine-level *edge skipping* based on the branch is a
-    /// follow-up (conditional edge traversal) tracked in the roadmap.
+    /// value. Emits `{ matched, branch }` where `branch` is `"true"`/`"false"`; the engine then
+    /// takes only the matching outgoing edge(s).
     async fn execute(
         &self,
         node: &NodeSpec,
-        input: Value,
+        input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         let field = node
             .params
@@ -262,23 +322,21 @@ impl NodeHandler for ConditionalHandler {
             .and_then(|v| v.as_str())
             .unwrap_or("eq");
         let expected = node.params.get("value").cloned().unwrap_or(Value::Null);
-        let actual = input.get(field).cloned().unwrap_or(Value::Null);
+        let actual = input.merged.get(field).cloned().unwrap_or(Value::Null);
 
         let matched = match op {
             "eq" => actual == expected,
             "ne" => actual != expected,
-            "gt" | "lt" | "ge" | "le" => {
-                match (actual.as_f64(), expected.as_f64()) {
-                    (Some(a), Some(e)) => match op {
-                        "gt" => a > e,
-                        "lt" => a < e,
-                        "ge" => a >= e,
-                        _ => a <= e,
-                    },
-                    // Non-numeric operands can't be ordered.
-                    _ => false,
-                }
-            }
+            "gt" | "lt" | "ge" | "le" => match (actual.as_f64(), expected.as_f64()) {
+                (Some(a), Some(e)) => match op {
+                    "gt" => a > e,
+                    "lt" => a < e,
+                    "ge" => a >= e,
+                    _ => a <= e,
+                },
+                // Non-numeric operands can't be ordered.
+                _ => false,
+            },
             other => return Err(format!("conditional: unsupported op '{other}'").into()),
         };
 
@@ -299,11 +357,11 @@ impl NodeHandler for ParallelHandler {
     async fn execute(
         &self,
         node: &NodeSpec,
-        _input: Value,
+        input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         Ok(json!({
             "parallel": node.id,
-            "input": _input
+            "input": input.merged,
         }))
     }
 }
