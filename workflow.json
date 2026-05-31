@@ -1,0 +1,22 @@
+{
+  "name": "my_first_flow",
+  "nodes": [
+    {
+      "id": "StartNode",
+      "type": "llm_call",
+      "model": "gpt-4o",
+      "params": { "prompt": "Hello {{input.name}}" },
+      "retry": { "max": 3, "backoff": "exponential" },
+      "resources": { "gpu": false }
+    },
+    {
+      "id": "Summarize",
+      "type": "agent",
+      "params": { "task": "Summarize the input text" }
+    }
+  ],
+  "connections": [
+    { "from": "StartNode", "to": "Summarize", "on": "success" }
+  ],
+  "settings": { "concurrency": 8, "fail_fast": false, "resume": true }
+}

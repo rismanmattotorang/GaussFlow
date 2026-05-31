@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "gaussflow-core",
+    "gaussflow-runtime",
+    "gaussflow-cli",
+    "gaussflow-py",
+    "gaussflow-web",
+    "gaussflow-tui"
+]
+resolver = "2"

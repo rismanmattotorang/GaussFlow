@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GaussFlow - DAG Workflow Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a24;
+            --bg-elevated: #22222e;
+            --bg-card: linear-gradient(145deg, #16161f 0%, #1a1a26 100%);
+            --accent-primary: #00f5d4;
+            --accent-secondary: #7b2cbf;
+            --accent-tertiary: #ff006e;
+            --accent-warning: #ffc300;
+            --accent-success: #00f5d4;
+            --accent-error: #ff006e;
+            --glow-primary: 0 0 20px rgba(0, 245, 212, 0.3);
+            --glow-secondary: 0 0 20px rgba(123, 44, 191, 0.3);
+            --glow-error: 0 0 20px rgba(255, 0, 110, 0.3);
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0b0;
+            --text-muted: #6a6a7a;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-accent: rgba(0, 245, 212, 0.3);
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            --radius-xl: 24px;
+            --font-primary: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; overflow: hidden; }
+        body { font-family: var(--font-primary); background: var(--bg-primary); color: var(--text-primary); line-height: 1.6; }
+        .app-container { display: flex; height: 100vh; background: radial-gradient(ellipse at 20% 0%, rgba(123, 44, 191, 0.15) 0%, transparent 50%), radial-gradient(ellipse at 80% 100%, rgba(0, 245, 212, 0.1) 0%, transparent 50%), var(--bg-primary); }
+        .sidebar { width: 260px; background: var(--bg-secondary); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; backdrop-filter: blur(10px); }
+        .sidebar-header { padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
+        .logo { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.5px; }
+        .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary)); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; font-size: 18px; box-shadow: var(--glow-primary); }
+        .nav-menu { flex: 1; padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; }
+        .nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--radius-md); color: var(--text-secondary); text-decoration: none; font-weight: 500; font-size: 14px; transition: all 0.2s ease; cursor: pointer; border: 1px solid transparent; }
+        .nav-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+        .nav-item.active { background: linear-gradient(135deg, rgba(0, 245, 212, 0.15), rgba(123, 44, 191, 0.1)); color: var(--accent-primary); border: 1px solid var(--border-accent); }
+        .nav-item svg { width: 20px; height: 20px; opacity: 0.8; }
+        .nav-section-title { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; padding: 16px 16px 8px; }
+        .sidebar-footer { padding: 16px; border-top: 1px solid var(--border-color); }
+        .connection-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-success); animation: pulse 2s infinite; }
+        .status-dot.disconnected { background: var(--accent-error); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .header { padding: 20px 32px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: rgba(18, 18, 26, 0.8); backdrop-filter: blur(10px); }
+        .header-title { font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+        .header-actions { display: flex; gap: 12px; align-items: center; }
+        .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: var(--radius-md); font-family: var(--font-primary); font-weight: 500; font-size: 14px; cursor: pointer; transition: all 0.2s ease; border: none; text-decoration: none; }
+        .btn-primary { background: linear-gradient(135deg, var(--accent-primary), #00d4b8); color: var(--bg-primary); box-shadow: var(--glow-primary); }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(0, 245, 212, 0.4); }
+        .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); }
+        .btn-secondary:hover { background: var(--bg-elevated); border-color: var(--border-accent); }
+        .btn-danger { background: rgba(255, 0, 110, 0.2); color: var(--accent-error); border: 1px solid rgba(255, 0, 110, 0.3); }
+        .btn-danger:hover { background: rgba(255, 0, 110, 0.3); }
+        .btn-icon { padding: 10px; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        .content-area { flex: 1; padding: 24px 32px; overflow-y: auto; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 32px; }
+        .stat-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 24px; position: relative; overflow: hidden; }
+        .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary)); }
+        .stat-label { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; font-weight: 500; }
+        .stat-value { font-size: 32px; font-weight: 700; font-family: var(--font-mono); color: var(--text-primary); letter-spacing: -1px; }
+        .stat-change { font-size: 12px; margin-top: 8px; display: flex; align-items: center; gap: 4px; }
+        .stat-change.positive { color: var(--accent-success); }
+        .stat-change.negative { color: var(--accent-error); }
+        .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .section-title { font-size: 18px; font-weight: 600; }
+        .workflow-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; }
+        .workflow-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 24px; cursor: pointer; transition: all 0.3s ease; position: relative; }
+        .workflow-card:hover { transform: translateY(-4px); border-color: var(--border-accent); box-shadow: var(--glow-primary); }
+        .workflow-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+        .workflow-name { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+        .workflow-status { padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        .workflow-status.active { background: rgba(0, 245, 212, 0.15); color: var(--accent-success); }
+        .workflow-status.draft { background: rgba(255, 195, 0, 0.15); color: var(--accent-warning); }
+        .workflow-status.paused { background: rgba(123, 44, 191, 0.15); color: var(--accent-secondary); }
+        .workflow-status.archived { background: rgba(106, 106, 122, 0.15); color: var(--text-muted); }
+        .workflow-description { font-size: 14px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .workflow-meta { display: flex; gap: 16px; font-size: 13px; color: var(--text-muted); }
+        .workflow-meta-item { display: flex; align-items: center; gap: 6px; }
+        .workflow-tags { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+        .workflow-tag { padding: 2px 8px; background: var(--bg-tertiary); border-radius: var(--radius-sm); font-size: 11px; color: var(--text-secondary); }
+        .workflow-actions { display: flex; gap: 8px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-color); }
+        .execution-list { display: flex; flex-direction: column; gap: 12px; }
+        .execution-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 20px 24px; display: flex; align-items: center; gap: 20px; transition: all 0.2s ease; cursor: pointer; }
+        .execution-item:hover { border-color: var(--border-accent); }
+        .execution-status-indicator { width: 40px; height: 40px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .execution-status-indicator.running { background: rgba(0, 245, 212, 0.15); color: var(--accent-success); animation: pulse 1.5s infinite; }
+        .execution-status-indicator.completed { background: rgba(0, 245, 212, 0.15); color: var(--accent-success); }
+        .execution-status-indicator.failed { background: rgba(255, 0, 110, 0.15); color: var(--accent-error); }
+        .execution-status-indicator.cancelled { background: rgba(106, 106, 122, 0.15); color: var(--text-muted); }
+        .execution-status-indicator.paused { background: rgba(255, 195, 0, 0.15); color: var(--accent-warning); }
+        .execution-info { flex: 1; }
+        .execution-name { font-weight: 600; margin-bottom: 4px; }
+        .execution-time { font-size: 13px; color: var(--text-muted); }
+        .execution-progress { width: 200px; }
+        .progress-bar { height: 6px; background: var(--bg-tertiary); border-radius: 3px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary)); border-radius: 3px; transition: width 0.3s ease; }
+        .progress-text { font-size: 12px; color: var(--text-muted); margin-top: 4px; font-family: var(--font-mono); }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(5px); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.3s ease; }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-xl); width: 90%; max-width: 700px; max-height: 85vh; overflow: hidden; transform: translateY(20px); transition: transform 0.3s ease; }
+        .modal-overlay.active .modal { transform: translateY(0); }
+        .modal.modal-lg { max-width: 900px; }
+        .modal-header { padding: 24px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+        .modal-title { font-size: 20px; font-weight: 600; }
+        .modal-close { width: 36px; height: 36px; border-radius: var(--radius-md); background: var(--bg-tertiary); border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; }
+        .modal-close:hover { background: var(--bg-elevated); color: var(--text-primary); }
+        .modal-body { padding: 24px; overflow-y: auto; max-height: calc(85vh - 140px); }
+        .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 12px; }
+        .form-group { margin-bottom: 20px; }
+        .form-label { display: block; font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
+        .form-input { width: 100%; padding: 12px 16px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-primary); font-family: var(--font-primary); font-size: 14px; transition: all 0.2s ease; }
+        .form-input:focus { outline: none; border-color: var(--accent-primary); box-shadow: 0 0 0 3px rgba(0, 245, 212, 0.1); }
+        .form-input::placeholder { color: var(--text-muted); }
+        textarea.form-input { min-height: 120px; resize: vertical; font-family: var(--font-mono); }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 2000; display: flex; flex-direction: column; gap: 12px; }
+        .toast { background: var(--bg-elevated); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px 20px; display: flex; align-items: center; gap: 12px; min-width: 300px; animation: slideIn 0.3s ease; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .toast.success { border-color: var(--accent-success); }
+        .toast.error { border-color: var(--accent-error); }
+        .toast-icon { font-size: 20px; }
+        .toast-message { flex: 1; font-size: 14px; }
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+        .empty-state-icon { font-size: 64px; margin-bottom: 20px; opacity: 0.3; }
+        .empty-state-title { font-size: 20px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+        .empty-state-description { font-size: 14px; max-width: 400px; margin: 0 auto 24px; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-secondary); }
+        ::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+        .view-container { display: none; }
+        .view-container.active { display: block; }
+        .logs-panel { background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 16px; font-family: var(--font-mono); font-size: 12px; max-height: 400px; overflow-y: auto; }
+        .log-entry { padding: 6px 0; display: flex; gap: 12px; border-bottom: 1px solid var(--border-color); }
+        .log-entry:last-child { border-bottom: none; }
+        .log-time { color: var(--text-muted); min-width: 90px; }
+        .log-level { min-width: 50px; font-weight: 600; }
+        .log-level.INFO { color: var(--accent-primary); }
+        .log-level.WARN { color: var(--accent-warning); }
+        .log-level.ERROR { color: var(--accent-error); }
+        .log-level.DEBUG { color: var(--text-muted); }
+        .log-message { color: var(--text-secondary); flex: 1; }
+        .log-node { color: var(--accent-secondary); font-size: 11px; }
+        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .detail-section { background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 16px; }
+        .detail-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px; }
+        .detail-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-color); }
+        .detail-item:last-child { border-bottom: none; }
+        .detail-label { color: var(--text-secondary); }
+        .detail-value { color: var(--text-primary); font-weight: 500; }
+        .kbd { display: inline-block; padding: 2px 6px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px; font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+        .loading { display: flex; align-items: center; justify-content: center; padding: 40px; }
+        .spinner { width: 40px; height: 40px; border: 3px solid var(--border-color); border-top-color: var(--accent-primary); border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .search-input { width: 250px; padding: 8px 16px; padding-left: 36px; background: var(--bg-tertiary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236a6a7a' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") no-repeat 12px center; border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-primary); font-size: 14px; }
+        .search-input:focus { outline: none; border-color: var(--accent-primary); }
+        @media (max-width: 1200px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } .detail-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 768px) { .sidebar { position: fixed; left: -260px; z-index: 100; transition: left 0.3s ease; } .sidebar.open { left: 0; } .stats-grid { grid-template-columns: 1fr; } .workflow-grid { grid-template-columns: 1fr; } .execution-item { flex-wrap: wrap; } .execution-progress { width: 100%; margin-top: 12px; } .form-row { grid-template-columns: 1fr; } .header-actions { flex-wrap: wrap; } .search-input { width: 100%; } }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo"><div class="logo-icon">∞</div>GaussFlow</div>
+            </div>
+            <nav class="nav-menu">
+                <div class="nav-section-title">Overview</div>
+                <a class="nav-item active" data-view="dashboard" onclick="showView('dashboard')">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                    Dashboard <span class="kbd" style="margin-left:auto">1</span>
+                </a>
+                <div class="nav-section-title">Workflows</div>
+                <a class="nav-item" data-view="workflows" onclick="showView('workflows')">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    All Workflows <span class="kbd" style="margin-left:auto">2</span>
+                </a>
+                <a class="nav-item" data-view="executions" onclick="showView('executions')">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Executions <span class="kbd" style="margin-left:auto">3</span>
+                </a>
+                <div class="nav-section-title">System</div>
+                <a class="nav-item" data-view="settings" onclick="showView('settings')">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Settings <span class="kbd" style="margin-left:auto">4</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="connection-status"><span class="status-dot" id="connectionStatus"></span><span id="connectionText">Connecting...</span></div>
+            </div>
+        </aside>
+        <main class="main-content">
+            <div class="view-container active" id="dashboardView">
+                <header class="header">
+                    <h1 class="header-title">Dashboard</h1>
+                    <div class="header-actions">
+                        <button class="btn btn-secondary btn-icon" onclick="refreshData()" title="Refresh (R)"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                        <button class="btn btn-primary" onclick="openCreateWorkflowModal()"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New Workflow</button>
+                    </div>
+                </header>
+                <div class="content-area">
+                    <div class="stats-grid">
+                        <div class="stat-card"><div class="stat-label">Total Workflows</div><div class="stat-value" id="statTotalWorkflows">0</div><div class="stat-change positive">Active & Ready</div></div>
+                        <div class="stat-card"><div class="stat-label">Active Executions</div><div class="stat-value" id="statActiveExecutions">0</div><div class="stat-change positive">Running now</div></div>
+                        <div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value" id="statSuccessRate">0%</div><div class="stat-change positive">Overall</div></div>
+                        <div class="stat-card"><div class="stat-label">System Uptime</div><div class="stat-value" id="statUptime">0s</div><div class="stat-change positive">Online</div></div>
+                    </div>
+                    <div class="section-header"><h2 class="section-title">Recent Executions</h2><a class="btn btn-secondary btn-sm" onclick="showView('executions')">View All</a></div>
+                    <div class="execution-list" id="recentExecutions"><div class="loading"><div class="spinner"></div></div></div>
+                </div>
+            </div>
+            <div class="view-container" id="workflowsView">
+                <header class="header">
+                    <h1 class="header-title">Workflows</h1>
+                    <div class="header-actions">
+                        <input type="text" class="search-input" id="workflowSearch" placeholder="Search workflows..." oninput="filterWorkflows()">
+                        <button class="btn btn-primary" onclick="openCreateWorkflowModal()"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New Workflow</button>
+                    </div>
+                </header>
+                <div class="content-area"><div class="workflow-grid" id="workflowGrid"><div class="loading"><div class="spinner"></div></div></div></div>
+            </div>
+            <div class="view-container" id="executionsView">
+                <header class="header">
+                    <h1 class="header-title">Executions</h1>
+                    <div class="header-actions">
+                        <select class="form-input" style="width:auto" id="executionFilter" onchange="filterExecutions()">
+                            <option value="">All Status</option>
+                            <option value="running">Running</option>
+                            <option value="completed">Completed</option>
+                            <option value="failed">Failed</option>
+                            <option value="cancelled">Cancelled</option>
+                        </select>
+                        <button class="btn btn-secondary btn-icon" onclick="refreshData()"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                    </div>
+                </header>
+                <div class="content-area"><div class="execution-list" id="executionList"><div class="loading"><div class="spinner"></div></div></div></div>
+            </div>
+            <div class="view-container" id="settingsView">
+                <header class="header"><h1 class="header-title">Settings</h1></header>
+                <div class="content-area">
+                    <div class="stat-card" style="max-width:600px">
+                        <h3 style="margin-bottom:20px">System Information</h3>
+                        <div class="form-group"><div class="form-label">API Endpoint</div><div style="color:var(--accent-primary);font-family:var(--font-mono)">http://localhost:8080/api</div></div>
+                        <div class="form-group"><div class="form-label">WebSocket Endpoint</div><div style="color:var(--accent-primary);font-family:var(--font-mono)">ws://localhost:8080/ws</div></div>
+                        <div class="form-group"><div class="form-label">Version</div><div style="color:var(--text-secondary)">GaussFlow WebUI v0.0.1</div></div>
+                    </div>
+                    <div class="stat-card" style="max-width:600px;margin-top:20px">
+                        <h3 style="margin-bottom:20px">Keyboard Shortcuts</h3>
+                        <div class="detail-item"><span class="detail-label"><span class="kbd">1</span>-<span class="kbd">4</span></span><span class="detail-value">Navigate tabs</span></div>
+                        <div class="detail-item"><span class="detail-label"><span class="kbd">R</span></span><span class="detail-value">Refresh data</span></div>
+                        <div class="detail-item"><span class="detail-label"><span class="kbd">N</span></span><span class="detail-value">New workflow</span></div>
+                        <div class="detail-item"><span class="detail-label"><span class="kbd">Esc</span></span><span class="detail-value">Close modal</span></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <div class="modal-overlay" id="createWorkflowModal">
+        <div class="modal">
+            <div class="modal-header"><h2 class="modal-title">Create New Workflow</h2><button class="modal-close" onclick="closeModal('createWorkflowModal')">✕</button></div>
+            <div class="modal-body">
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">Workflow Name *</label><input type="text" class="form-input" id="workflowName" placeholder="My Workflow"></div>
+                    <div class="form-group"><label class="form-label">Tags (comma-separated)</label><input type="text" class="form-input" id="workflowTags" placeholder="llm, agent, data"></div>
+                </div>
+                <div class="form-group"><label class="form-label">Description</label><input type="text" class="form-input" id="workflowDescription" placeholder="What does this workflow do?"></div>
+                <div class="form-group"><label class="form-label">Workflow Specification (JSON)</label><textarea class="form-input" id="workflowSpec" style="min-height:200px">{
+  "name": "My Workflow",
+  "nodes": [
+    {"id": "input", "type": "data_processor", "name": "Input"},
+    {"id": "process", "type": "llm_call", "name": "Process"},
+    {"id": "output", "type": "data_processor", "name": "Output"}
+  ],
+  "connections": [
+    {"from": "input", "to": "process"},
+    {"from": "process", "to": "output"}
+  ],
+  "settings": {}
+}</textarea></div>
+            </div>
+            <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('createWorkflowModal')">Cancel</button><button class="btn btn-primary" onclick="createWorkflow()">Create Workflow</button></div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="workflowDetailModal">
+        <div class="modal modal-lg">
+            <div class="modal-header"><h2 class="modal-title" id="detailWorkflowName">Workflow Details</h2><button class="modal-close" onclick="closeModal('workflowDetailModal')">✕</button></div>
+            <div class="modal-body" id="workflowDetailContent"></div>
+            <div class="modal-footer" id="workflowDetailFooter"></div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="executionDetailModal">
+        <div class="modal modal-lg">
+            <div class="modal-header"><h2 class="modal-title" id="detailExecutionName">Execution Details</h2><button class="modal-close" onclick="closeModal('executionDetailModal')">✕</button></div>
+            <div class="modal-body" id="executionDetailContent"></div>
+            <div class="modal-footer" id="executionDetailFooter"></div>
+        </div>
+    </div>
+    <div class="toast-container" id="toastContainer"></div>
+    <script>
+        const state = { workflows: [], executions: [], connected: false, ws: null, currentFilter: '' };
+        
+        function initWebSocket() {
+            const wsUrl = `ws://${window.location.host}/ws`;
+            state.ws = new WebSocket(wsUrl);
+            state.ws.onopen = () => { state.connected = true; updateConnectionStatus(true); };
+            state.ws.onclose = () => { state.connected = false; updateConnectionStatus(false); setTimeout(initWebSocket, 3000); };
+            state.ws.onerror = (e) => console.error('WebSocket error:', e);
+            state.ws.onmessage = (e) => handleServerEvent(JSON.parse(e.data));
+        }
+        
+        function handleServerEvent(event) {
+            switch(event.type) {
+                case 'initial_data': case 'refresh_data':
+                    state.workflows = event.workflows || [];
+                    state.executions = event.executions || [];
+                    renderAll();
+                    break;
+                case 'workflow_created':
+                    state.workflows.push(event.workflow);
+                    renderAll();
+                    showToast('Workflow created successfully', 'success');
+                    break;
+                case 'workflow_updated':
+                    const wIdx = state.workflows.findIndex(w => w.id === event.workflow.id);
+                    if(wIdx >= 0) state.workflows[wIdx] = event.workflow;
+                    renderAll();
+                    break;
+                case 'workflow_deleted':
+                    state.workflows = state.workflows.filter(w => w.id !== event.workflow_id);
+                    renderAll();
+                    break;
+                case 'execution_started':
+                    const eIdx = state.executions.findIndex(e => e.id === event.execution.id);
+                    if(eIdx >= 0) state.executions[eIdx] = event.execution;
+                    else state.executions.unshift(event.execution);
+                    renderAll();
+                    showToast(`Execution started: ${event.execution.workflow_name}`, 'success');
+                    break;
+                case 'execution_progress':
+                    const exec = state.executions.find(e => e.id === event.execution_id);
+                    if(exec) { exec.progress = event.progress; exec.current_node = event.current_node; renderExecutions(); }
+                    break;
+                case 'execution_completed': case 'execution_failed':
+                    const cExec = state.executions.find(e => e.id === event.execution.id);
+                    if(cExec) Object.assign(cExec, event.execution);
+                    renderAll();
+                    showToast(`Execution ${event.type === 'execution_completed' ? 'completed' : 'failed'}: ${event.execution.workflow_name}`, event.type === 'execution_completed' ? 'success' : 'error');
+                    break;
+                case 'execution_cancelled':
+                    const cancelled = state.executions.find(e => e.id === event.execution_id);
+                    if(cancelled) cancelled.status = 'cancelled';
+                    renderAll();
+                    break;
+                case 'system_metrics':
+                    updateMetrics(event.metrics);
+                    break;
+            }
+        }
+        
+        function updateConnectionStatus(connected) {
+            const dot = document.getElementById('connectionStatus');
+            const text = document.getElementById('connectionText');
+            dot.className = connected ? 'status-dot' : 'status-dot disconnected';
+            text.textContent = connected ? 'Connected' : 'Disconnected';
+        }
+        
+        function showView(viewName) {
+            document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            document.getElementById(viewName + 'View').classList.add('active');
+            document.querySelector(`[data-view="${viewName}"]`)?.classList.add('active');
+        }
+        
+        function renderAll() { renderWorkflows(); renderExecutions(); updateStats(); }
+        
+        function renderWorkflows() {
+            const grid = document.getElementById('workflowGrid');
+            const search = document.getElementById('workflowSearch')?.value?.toLowerCase() || '';
+            let workflows = state.workflows.filter(w => !search || w.name.toLowerCase().includes(search) || (w.description||'').toLowerCase().includes(search));
+            if(!workflows.length) { grid.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No workflows found</div><div class="empty-state-description">${search ? 'Try a different search term' : 'Create your first workflow to get started'}</div>${!search ? '<button class="btn btn-primary" onclick="openCreateWorkflowModal()">Create Workflow</button>' : ''}</div>`; return; }
+            grid.innerHTML = workflows.map(w => `
+                <div class="workflow-card" onclick="showWorkflowDetails('${w.id}')">
+                    <div class="workflow-card-header"><div class="workflow-name">${esc(w.name)}</div><span class="workflow-status ${w.status}">${w.status}</span></div>
+                    <div class="workflow-description">${esc(w.description || 'No description')}</div>
+                    <div class="workflow-meta"><div class="workflow-meta-item"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>${w.node_count} nodes</div><div class="workflow-meta-item"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>${w.edge_count} edges</div></div>
+                    ${w.tags?.length ? `<div class="workflow-tags">${w.tags.map(t=>`<span class="workflow-tag">${esc(t)}</span>`).join('')}</div>` : ''}
+                    <div class="workflow-actions">
+                        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();executeWorkflow('${w.id}')"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Run</button>
+                        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();duplicateWorkflow('${w.id}')">Duplicate</button>
+                        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteWorkflow('${w.id}')">Delete</button>
+                    </div>
+                </div>`).join('');
+        }
+        
+        function renderExecutions() {
+            const list = document.getElementById('executionList');
+            const recent = document.getElementById('recentExecutions');
+            const filter = document.getElementById('executionFilter')?.value || '';
+            let execs = state.executions.slice().sort((a,b) => new Date(b.started_at) - new Date(a.started_at));
+            if(filter) execs = execs.filter(e => e.status === filter);
+            const render = (arr, el) => {
+                if(!arr.length) { el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">No executions${filter ? ' with this status' : ''}</div><div class="empty-state-description">Execute a workflow to see it here</div></div>`; return; }
+                el.innerHTML = arr.map(e => {
+                    const icons = {running:'⚡',completed:'✓',failed:'✗',cancelled:'⊘',pending:'⏳',paused:'⏸'};
+                    return `<div class="execution-item" onclick="showExecutionDetails('${e.id}')">
+                        <div class="execution-status-indicator ${e.status}">${icons[e.status]||'?'}</div>
+                        <div class="execution-info"><div class="execution-name">${esc(e.workflow_name)}</div><div class="execution-time">${formatTime(e.started_at)}${e.duration_ms ? ` • ${(e.duration_ms/1000).toFixed(1)}s` : ''}</div></div>
+                        <div class="execution-progress"><div class="progress-bar"><div class="progress-fill" style="width:${e.progress||0}%"></div></div><div class="progress-text">${(e.progress||0).toFixed(0)}%${e.current_node ? ` • ${e.current_node}` : ''}</div></div>
+                        ${e.status==='running'?`<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();cancelExecution('${e.id}')">Cancel</button>`:''}
+                    </div>`;
+                }).join('');
+            };
+            render(execs, list);
+            render(execs.slice(0,5), recent);
+        }
+        
+        function updateStats() {
+            document.getElementById('statTotalWorkflows').textContent = state.workflows.length;
+            document.getElementById('statActiveExecutions').textContent = state.executions.filter(e=>e.status==='running').length;
+            const total = state.executions.length, completed = state.executions.filter(e=>e.status==='completed').length;
+            document.getElementById('statSuccessRate').textContent = total ? Math.round(completed/total*100)+'%' : '0%';
+        }
+        
+        function updateMetrics(m) {
+            document.getElementById('statUptime').textContent = formatDuration(m.uptime_seconds);
+            document.getElementById('statActiveExecutions').textContent = m.active_executions;
+        }
+        
+        function openCreateWorkflowModal() { document.getElementById('createWorkflowModal').classList.add('active'); document.getElementById('workflowName').focus(); }
+        function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+        
+        async function createWorkflow() {
+            const name = document.getElementById('workflowName').value.trim();
+            if(!name) { showToast('Please enter a workflow name', 'error'); return; }
+            try {
+                const spec = JSON.parse(document.getElementById('workflowSpec').value);
+                spec.name = name;
+                const tags = document.getElementById('workflowTags').value.split(',').map(t=>t.trim()).filter(Boolean);
+                const res = await fetch('/api/workflows', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, description:document.getElementById('workflowDescription').value, spec, tags}) });
+                if(res.ok) { closeModal('createWorkflowModal'); document.getElementById('workflowName').value=''; document.getElementById('workflowDescription').value=''; document.getElementById('workflowTags').value=''; }
+                else { const d = await res.json(); showToast(d.error?.message || 'Failed to create workflow', 'error'); }
+            } catch(e) { showToast('Invalid JSON specification', 'error'); }
+        }
+        
+        async function executeWorkflow(id) {
+            try {
+                const res = await fetch(`/api/workflows/${id}/execute`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({input:null}) });
+                if(!res.ok) { const d = await res.json(); showToast(d.error?.message || 'Failed to execute', 'error'); }
+            } catch(e) { showToast('Failed to execute workflow', 'error'); }
+        }
+        
+        async function deleteWorkflow(id) {
+            if(!confirm('Delete this workflow?')) return;
+            try { await fetch(`/api/workflows/${id}`, {method:'DELETE'}); } catch(e) { showToast('Failed to delete', 'error'); }
+        }
+        
+        async function duplicateWorkflow(id) {
+            try {
+                const res = await fetch(`/api/workflows/${id}/duplicate`, {method:'POST'});
+                if(res.ok) showToast('Workflow duplicated', 'success');
+                else showToast('Failed to duplicate', 'error');
+            } catch(e) { showToast('Failed to duplicate', 'error'); }
+        }
+        
+        async function cancelExecution(id) {
+            try { await fetch(`/api/executions/${id}/cancel`, {method:'POST'}); showToast('Execution cancelled', 'success'); } catch(e) { showToast('Failed to cancel', 'error'); }
+        }
+        
+        async function refreshData() {
+            try {
+                const [wRes, eRes] = await Promise.all([fetch('/api/workflows'), fetch('/api/executions')]);
+                const wData = await wRes.json(), eData = await eRes.json();
+                if(wData.success) state.workflows = wData.data;
+                if(eData.success) state.executions = eData.data;
+                renderAll();
+                showToast('Data refreshed', 'success');
+            } catch(e) { showToast('Failed to refresh', 'error'); }
+        }
+        
+        function showWorkflowDetails(id) {
+            const w = state.workflows.find(x=>x.id===id);
+            if(!w) return;
+            document.getElementById('detailWorkflowName').textContent = w.name;
+            document.getElementById('workflowDetailContent').innerHTML = `
+                <div class="detail-grid">
+                    <div class="detail-section"><div class="detail-section-title">Info</div>
+                        <div class="detail-item"><span class="detail-label">Status</span><span class="workflow-status ${w.status}">${w.status}</span></div>
+                        <div class="detail-item"><span class="detail-label">Nodes</span><span class="detail-value">${w.node_count}</span></div>
+                        <div class="detail-item"><span class="detail-label">Edges</span><span class="detail-value">${w.edge_count}</span></div>
+                        <div class="detail-item"><span class="detail-label">Version</span><span class="detail-value">${w.version||1}</span></div>
+                    </div>
+                    <div class="detail-section"><div class="detail-section-title">Timestamps</div>
+                        <div class="detail-item"><span class="detail-label">Created</span><span class="detail-value">${formatTime(w.created_at)}</span></div>
+                        <div class="detail-item"><span class="detail-label">Updated</span><span class="detail-value">${formatTime(w.updated_at)}</span></div>
+                    </div>
+                </div>
+                <div style="margin-top:20px"><div class="detail-section-title">Description</div><p style="color:var(--text-secondary)">${esc(w.description||'No description')}</p></div>
+                ${w.tags?.length ? `<div style="margin-top:16px"><div class="detail-section-title">Tags</div><div class="workflow-tags">${w.tags.map(t=>`<span class="workflow-tag">${esc(t)}</span>`).join('')}</div></div>` : ''}
+                <div style="margin-top:20px"><div class="detail-section-title">Specification</div><pre class="logs-panel" style="white-space:pre-wrap">${esc(JSON.stringify(w.spec,null,2))}</pre></div>`;
+            document.getElementById('workflowDetailFooter').innerHTML = `<button class="btn btn-danger" onclick="deleteWorkflow('${w.id}');closeModal('workflowDetailModal')">Delete</button><button class="btn btn-secondary" onclick="duplicateWorkflow('${w.id}')">Duplicate</button><button class="btn btn-primary" onclick="executeWorkflow('${w.id}');closeModal('workflowDetailModal')">Execute</button>`;
+            document.getElementById('workflowDetailModal').classList.add('active');
+        }
+        
+        function showExecutionDetails(id) {
+            const e = state.executions.find(x=>x.id===id);
+            if(!e) return;
+            document.getElementById('detailExecutionName').textContent = e.workflow_name;
+            const statusColors = {running:'var(--accent-warning)',completed:'var(--accent-success)',failed:'var(--accent-error)',cancelled:'var(--text-muted)'};
+            document.getElementById('executionDetailContent').innerHTML = `
+                <div class="detail-grid">
+                    <div class="detail-section"><div class="detail-section-title">Status</div>
+                        <div class="detail-item"><span class="detail-label">Status</span><span class="detail-value" style="color:${statusColors[e.status]||'inherit'}">${e.status.toUpperCase()}</span></div>
+                        <div class="detail-item"><span class="detail-label">Progress</span><span class="detail-value">${(e.progress||0).toFixed(1)}%</span></div>
+                        <div class="detail-item"><span class="detail-label">Current Node</span><span class="detail-value">${e.current_node||'-'}</span></div>
+                        <div class="detail-item"><span class="detail-label">Duration</span><span class="detail-value">${e.duration_ms ? (e.duration_ms/1000).toFixed(2)+'s' : '-'}</span></div>
+                    </div>
+                    <div class="detail-section"><div class="detail-section-title">Progress</div>
+                        <div class="detail-item"><span class="detail-label">Completed</span><span class="detail-value">${e.completed_nodes?.length||0} nodes</span></div>
+                        <div class="detail-item"><span class="detail-label">Failed</span><span class="detail-value">${e.failed_nodes?.length||0} nodes</span></div>
+                        <div class="detail-item"><span class="detail-label">Started</span><span class="detail-value">${formatTime(e.started_at)}</span></div>
+                        <div class="detail-item"><span class="detail-label">Finished</span><span class="detail-value">${e.finished_at ? formatTime(e.finished_at) : '-'}</span></div>
+                    </div>
+                </div>
+                ${e.error ? `<div style="margin-top:20px;padding:16px;background:rgba(255,0,110,0.1);border:1px solid var(--accent-error);border-radius:var(--radius-md)"><strong style="color:var(--accent-error)">Error:</strong> ${esc(e.error)}</div>` : ''}
+                <div style="margin-top:20px"><div class="detail-section-title">Logs (${e.logs?.length||0})</div><div class="logs-panel">${(e.logs||[]).map(l=>`<div class="log-entry"><span class="log-time">${new Date(l.timestamp).toLocaleTimeString()}</span><span class="log-level ${l.level}">${l.level}</span><span class="log-message">${esc(l.message)}</span>${l.node_id?`<span class="log-node">[${l.node_id}]</span>`:''}</div>`).join('')||'<div style="color:var(--text-muted)">No logs</div>'}</div></div>`;
+            document.getElementById('executionDetailFooter').innerHTML = e.status==='running' ? `<button class="btn btn-danger" onclick="cancelExecution('${e.id}');closeModal('executionDetailModal')">Cancel Execution</button>` : `<button class="btn btn-secondary" onclick="closeModal('executionDetailModal')">Close</button>`;
+            document.getElementById('executionDetailModal').classList.add('active');
+        }
+        
+        function filterWorkflows() { renderWorkflows(); }
+        function filterExecutions() { renderExecutions(); }
+        
+        function showToast(msg, type='info') {
+            const c = document.getElementById('toastContainer');
+            const t = document.createElement('div');
+            t.className = `toast ${type}`;
+            t.innerHTML = `<span class="toast-icon">${type==='success'?'✓':type==='error'?'✗':'ℹ'}</span><span class="toast-message">${esc(msg)}</span>`;
+            c.appendChild(t);
+            setTimeout(() => t.remove(), 4000);
+        }
+        
+        function esc(s) { if(!s) return ''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+        function formatTime(iso) { if(!iso) return 'Unknown'; return new Date(iso).toLocaleString(); }
+        function formatDuration(s) { if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; if(s<86400) return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d'; }
+        
+        document.addEventListener('keydown', (e) => {
+            if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
+            if(e.key==='Escape') { document.querySelectorAll('.modal-overlay.active').forEach(m=>m.classList.remove('active')); return; }
+            if(e.key==='1') showView('dashboard');
+            if(e.key==='2') showView('workflows');
+            if(e.key==='3') showView('executions');
+            if(e.key==='4') showView('settings');
+            if(e.key.toLowerCase()==='r') refreshData();
+            if(e.key.toLowerCase()==='n') openCreateWorkflowModal();
+        });
+        
+        document.addEventListener('DOMContentLoaded', () => { initWebSocket(); refreshData(); });
+    </script>
+</body>
+</html>

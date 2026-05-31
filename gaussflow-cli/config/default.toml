@@ -1,0 +1,87 @@
+# GaussFlow Default Configuration
+# This file contains the default configuration for GaussFlow CLI
+
+[database]
+url = "http://127.0.0.1:8000"
+namespace = "gaussflow"
+database = "gaussflow"
+username = "root"
+password = "REDACTED"
+max_connections = 10
+connection_timeout = 30
+query_timeout = 60
+
+[cache]
+enabled = true
+max_size = 1000
+ttl_seconds = 3600
+eviction_policy = "lru"
+compression = true
+persistence = false
+persistence_path = null
+
+[server]
+host = "0.0.0.0"
+port = 3030
+workers = 8
+max_connections = 1000
+timeout = 30
+cors_enabled = true
+cors_origins = ["*"]
+
+[metrics]
+enabled = true
+port = 9090
+path = "/metrics"
+retention_days = 30
+export_interval = 60
+
+[security]
+jwt_secret = "REDACTED-change-in-production"
+jwt_expiration = 3600
+rate_limit_enabled = true
+rate_limit_requests = 100
+rate_limit_window = 60
+encryption_enabled = false
+encryption_key = null
+
+[performance]
+max_concurrent_workflows = 100
+workflow_timeout = 3600
+memory_limit_mb = 1024
+cpu_limit_percent = 80
+enable_profiling = false
+profiling_path = null
+
+[logging]
+level = "info"
+format = "json"
+output = "stdout"
+file_path = null
+max_file_size = 104857600  # 100MB
+max_files = 5
+enable_structured_logging = true
+
+[services.openai]
+api_key = null
+base_url = "https://api.openai.com/v1"
+timeout = 30
+max_retries = 3
+
+[services.anthropic]
+api_key = null
+base_url = "https://api.anthropic.com"
+timeout = 30
+max_retries = 3
+
+[services.azure]
+endpoint = null
+api_key = null
+deployment_name = null
+timeout = 30
+
+[services.aws]
+region = null
+access_key_id = null
+secret_access_key = null
+session_token = null 
