@@ -35,17 +35,22 @@ pub trait LlmProvider: Send + Sync {
 /// Select a provider for a given model.
 ///
 /// `GAUSSFLOW_LLM_PROVIDER` (`mock` | `openai`) takes precedence; otherwise a model whose name
-/// starts with `mock` uses the deterministic [`MockProvider`], and everything else uses OpenAI.
+/// starts with `mock` uses the deterministic [`MockProvider`], a model starting with `claude`
+/// (or `anthropic`) uses [`AnthropicProvider`], and everything else uses [`OpenAiProvider`].
 pub fn provider_for(model: &str) -> Box<dyn LlmProvider> {
     if let Ok(p) = std::env::var("GAUSSFLOW_LLM_PROVIDER") {
         match p.to_ascii_lowercase().as_str() {
             "mock" => return Box::new(MockProvider),
             "openai" => return Box::new(OpenAiProvider),
+            "anthropic" => return Box::new(AnthropicProvider),
             _ => {}
         }
     }
-    if model.starts_with("mock") {
+    let m = model.to_ascii_lowercase();
+    if m.starts_with("mock") {
         Box::new(MockProvider)
+    } else if m.starts_with("claude") || m.starts_with("anthropic") {
+        Box::new(AnthropicProvider)
     } else {
         Box::new(OpenAiProvider)
     }
@@ -108,5 +113,53 @@ impl LlmProvider for OpenAiProvider {
 
     fn name(&self) -> &'static str {
         "openai"
+    }
+}
+
+/// Anthropic Messages API provider. Reads `ANTHROPIC_API_KEY` from the environment.
+#[derive(Debug, Default)]
+pub struct AnthropicProvider;
+
+#[async_trait]
+impl LlmProvider for AnthropicProvider {
+    async fn complete(&self, req: &CompletionRequest) -> Result<String, ProviderError> {
+        let mut body = json!({
+            "model": req.model,
+            "max_tokens": 4096,
+            "messages": [ { "role": "user", "content": req.prompt } ],
+        });
+        if let Some(system) = &req.system {
+            body["system"] = json!(system);
+        }
+        if let Some(temp) = req.temperature {
+            body["temperature"] = json!(temp);
+        }
+
+        let api_key =
+            std::env::var("ANTHROPIC_API_KEY").map_err(|_| "ANTHROPIC_API_KEY not set")?;
+        let client = reqwest::Client::new();
+        let resp = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to send request to Anthropic API: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("Anthropic API returned an error: {e}"))?
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("Failed to parse Anthropic API response: {e}"))?;
+
+        // Messages API returns `content: [{ type: "text", text: "..." }, ...]`.
+        resp["content"][0]["text"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "Invalid response format from Anthropic API".into())
+    }
+
+    fn name(&self) -> &'static str {
+        "anthropic"
     }
 }

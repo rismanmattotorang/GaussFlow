@@ -13,7 +13,10 @@
 //! returns canned plans, so the whole pipeline is exercised offline.
 
 pub mod catalog;
+pub mod deploy;
 pub mod plan;
+
+pub use deploy::{deploy, run_deployment, Deployment, DeploymentStore, InMemoryDeploymentStore};
 
 use std::collections::HashMap;
 

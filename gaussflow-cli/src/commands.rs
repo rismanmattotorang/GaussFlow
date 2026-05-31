@@ -33,6 +33,14 @@ pub struct SynthCommand {
     /// Write the synthesized workflow spec to a file (for editing, then `gaussflow run <file>`)
     #[arg(long, value_name = "PATH")]
     pub save: Option<PathBuf>,
+
+    /// Persist the confirmed workflow as a versioned, immutable deployment (with prompt provenance)
+    #[arg(long)]
+    pub deploy: bool,
+
+    /// Directory for persisted deployments
+    #[arg(long, value_name = "DIR", default_value = ".gaussflow/deployments")]
+    pub deploy_dir: PathBuf,
 }
 
 #[derive(Args, Debug)]
@@ -539,21 +547,44 @@ pub async fn synthesize_workflow(
         println!("\n{} {}", style("Saved spec to").green(), path.display());
     }
 
+    // Deploy: persist the confirmed workflow as a versioned, immutable deployment with provenance.
+    let deployment = if cmd.deploy {
+        let store = gaussflow_synth::deploy::FileDeploymentStore::new(&cmd.deploy_dir)
+            .map_err(|e| anyhow::anyhow!("could not open deployment store: {e}"))?;
+        let dep = gaussflow_synth::deploy::deploy(&result, &cmd.prompt, &store)
+            .await
+            .map_err(|e| anyhow::anyhow!("deploy failed: {e}"))?;
+        println!(
+            "\n{} {} (version {}, hash {}…) in {}",
+            style("Deployed").green().bold(),
+            dep.id,
+            dep.version,
+            &dep.spec_hash[..12.min(dep.spec_hash.len())],
+            cmd.deploy_dir.display()
+        );
+        Some((store, dep))
+    } else {
+        None
+    };
+
     if cmd.run {
-        pb.set_message("Deploying and running the synthesized workflow...");
+        pb.set_message("Running the synthesized workflow...");
         let input = cmd
             .input
             .map_or(Ok(serde_json::Value::Null), |i| serde_json::from_str(&i))
             .context("--input is not valid JSON")?;
-        let output = gaussflow_synth::run(&result, input)
-            .await
-            .map_err(|e| anyhow::anyhow!("Run failed: {e}"))?;
+        // If we deployed, run through the deployment so the run is traced back to it.
+        let output = match &deployment {
+            Some((store, dep)) => gaussflow_synth::deploy::run_deployment(dep, input, store).await,
+            None => gaussflow_synth::run(&result, input).await,
+        }
+        .map_err(|e| anyhow::anyhow!("Run failed: {e}"))?;
         println!("\n{}", style("Run result").bold().underlined());
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!(
             "\n{}",
-            style("Re-run with --run to deploy and execute this workflow.").dim()
+            style("Re-run with --run to execute (and --deploy to persist) this workflow.").dim()
         );
     }
 

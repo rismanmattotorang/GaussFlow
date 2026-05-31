@@ -5,3 +5,6 @@ target/
 .env
 .env.*
 !.env.example
+
+# Local persisted deployments (gaussflow synth --deploy)
+.gaussflow/

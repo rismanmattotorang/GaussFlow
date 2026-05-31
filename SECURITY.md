@@ -37,7 +37,9 @@ Relevant environment variables:
 | `GAUSSFLOW_DB_NS` | SurrealDB namespace | `gaussflow` |
 | `GAUSSFLOW_DB_NAME` | SurrealDB database | `gaussflow` |
 | `GAUSSFLOW_JWT_SECRET` | JWT signing secret | *empty* — `Config::validate()` rejects an empty secret, so this must be set to enable auth |
-| `OPENAI_API_KEY` | OpenAI LLM node | *unset* |
+| `OPENAI_API_KEY` | OpenAI provider (`llm_call`, `synth` planning) | *unset* |
+| `ANTHROPIC_API_KEY` | Anthropic provider (`claude*` models) | *unset* |
+| `GAUSSFLOW_LLM_PROVIDER` | Force a provider (`mock`/`openai`/`anthropic`) | by model name |
 
 The local-dev fallbacks exist only so the project runs out of the box against a throwaway local
 SurrealDB. They are intentionally insecure and must be overridden in any shared or hosted

@@ -105,11 +105,11 @@ capability stands today, evaluated against the product vision above.
 |---|---|---|
 | **Clean `cargo build --workspace`** | ✅ **Working** | Builds + tests green; gated in CI. Requires `protoc` (see prerequisites). |
 | **Prompt → DAG synthesis (the compiler)** | 🟡 **Working (v1)** | `gaussflow-synth`: prompt → Plan IR → lower → validate → bounded repair. Capability catalog kept in lockstep with the runtime. Needs a capable LLM for planning; offline-tested with a scripted provider |
-| **Confirm → Deploy → Run lifecycle** | 🟡 **Working (v1)** | Plan + spec rendered for review; `gaussflow synth "<prompt>" --run` deploys+runs on the real engine. Rich edit UX, cost estimates, durable deploy still to come |
+| **Confirm → Deploy → Run lifecycle** | 🟡 **Working (v1)** | Plan + cost/latency estimate rendered for review; edit→re-validate + regenerate-with-feedback; `--deploy` persists versioned, immutable, provenance-bearing deployments with run trace-back; `--run` executes on the real engine. Secrets/quotas/triggers still to come |
 | Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core` compiles and validates (cycle/type checks) — the synthesis *target* |
 | Topological single-machine execution | ✅ **Working** | One canonical engine (`gaussflow_runtime::execute_with_store`); runs with **no database** and returns real per-node outputs |
 | Run with **no external dependencies** | ✅ **Working** | `RunStore` trait + in-memory default; SurrealDB is opt-in via `GAUSSFLOW_RUN_STORE=surreal` |
-| LLM node + provider abstraction | ✅ **Working** | `LlmProvider` trait; OpenAI provider + deterministic offline `MockProvider` (no API key needed for `mock*` models). Anthropic/Ollama planned |
+| LLM node + provider abstraction | ✅ **Working** | `LlmProvider` trait; **OpenAI + Anthropic** providers + deterministic offline `MockProvider`, selected by model name (`gpt*`/`claude*`/`mock*`) or `GAUSSFLOW_LLM_PROVIDER`. Local/Ollama planned |
 | Data-processor / conditional nodes | ✅ **Working** | Real deterministic transforms (`extract`/`set`) and comparisons (`eq`/`gt`/…); tested offline |
 | Conditional/router branching | ✅ **Working** | Engine traverses edges by `on` label and skips untaken branches; `router` selects by input field; `subgraph` runs a nested workflow |
 | Ensemble fan-in (named ports) | ✅ **Working** | Handlers receive per-predecessor outputs; `ensemble` aggregates via `collect`/`first`/`vote` |
@@ -228,15 +228,18 @@ cargo test  --workspace   # ✅ green
 ### Synthesize from a prompt (the flagship loop)
 
 ```bash
-# Describe the outcome; GaussFlow compiles it to a DAG, shows the plan, and (with --run) runs it.
-# Live planning needs a capable model, e.g. OpenAI:
-export OPENAI_API_KEY=sk-...
-cargo run -p gaussflow-cli -- synth "Extract the text field, then summarize it" --run
+# Describe the outcome; GaussFlow compiles it to a DAG, shows the plan + estimate, and runs it.
+# Live planning needs a capable model — OpenAI (gpt*) or Anthropic (claude*):
+export OPENAI_API_KEY=sk-...        # or: export ANTHROPIC_API_KEY=sk-ant-...
+cargo run -p gaussflow-cli -- synth "Extract the text field, then summarize it" \
+    --model gpt-4o-mini --run --deploy
 ```
 
-This prints the proposed plan + workflow spec (the confirmation view), then — with `--run` —
-deploys and executes it on the same engine a hand-authored workflow uses. The synthesized spec is
-held to the *same* validation as any other workflow.
+This prints the proposed plan, a cost/latency estimate, and the workflow spec (the confirmation
+view), then — with `--run` — executes it on the same engine a hand-authored workflow uses, and —
+with `--deploy` — persists a **versioned, immutable** deployment (with the originating prompt as
+provenance) and links the run back to it. The synthesized spec is held to the *same* validation as
+any other workflow. (Use `--save out.json` to write the spec for hand-editing.)
 
 ### Validate and run a hand-authored workflow
 

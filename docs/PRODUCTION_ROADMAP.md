@@ -153,7 +153,9 @@ real implementations**; the remaining items (extra providers, streaming) are enh
       built-in tools `echo`/`upper`/`sum`. Covered by the `agent_parallel` tests.
 - [x] **Parallel node.** ✅ `ParallelHandler` runs an array of inline `branches` concurrently (each
       on its own in-memory engine) and collects their outputs in order.
-- [ ] **More providers.** Real Anthropic + local/Ollama providers behind `LlmProvider`. *(enhancement)*
+- [x] **More providers.** ✅ Anthropic (Messages API) added behind `LlmProvider`, alongside OpenAI
+      and the offline mock; selected by model name or `GAUSSFLOW_LLM_PROVIDER`. *(Local/Ollama still
+      to come.)*
 - [ ] **Streaming.** Token streaming for LLM nodes surfaced over the API/WebSocket. *(enhancement)*
 
 **Exit criteria:** ✅ **met** — every `NodeType` variant has a real implementation: `llm_call`,
@@ -201,11 +203,19 @@ This is the highest-value phase. Everything before it existed to make this phase
       first-pass validation rate, avg repair iterations, and run-success rate with regression-gate
       asserts (currently 100% validated, 100% run, 86% first-pass). *Measuring real planning
       quality needs a live provider; the corpus uses canned plans as stand-ins.*
-- [ ] **Deploy hardening.** Persist confirmed, versioned, immutable specs; resolve providers and
-      secrets from the secrets manager; reserve quotas; register triggers; trace runs back to the
-      originating prompt.
-- [ ] **Real planning provider.** Planning needs a capable LLM; wire Anthropic/OpenAI for live use
-      (offline tests use a scripted stub provider).
+- [x] **Deploy hardening (first cut).** ✅ `deploy.rs`: confirmed results become **versioned,
+      immutable** `Deployment` records (SHA-256 content hash; per-name version; rejects overwriting
+      with different content) carrying the **originating prompt (provenance)**. `run_deployment`
+      executes on the canonical runtime and links each run back to its deployment (**trace-back**).
+      `DeploymentStore` has in-memory and file-backed (`FileDeploymentStore`) implementations; CLI:
+      `gaussflow synth … --deploy [--deploy-dir]`. *Remaining: secrets-manager resolution, resource
+      quotas, and trigger/schedule registration.*
+- [x] **Production planning provider.** ✅ Planning runs on the real `LlmProvider`s — OpenAI and
+      **Anthropic** (selected by model name: `gpt*`/`claude*`, or `GAUSSFLOW_LLM_PROVIDER`).
+      `gaussflow synth "<prompt>" --model claude-3-5-sonnet` plans for real. *(Local/Ollama still
+      to come.)*
+- [x] **Real planning provider.** ✅ Planning runs on OpenAI or Anthropic (by model name);
+      offline tests use a scripted stub provider.
 
 **Exit criteria (first version ✅):** a prompt produces a `WorkflowSpec` that passes the same
 validator a hand-authored graph does, uses only runtime-supported node types (with bounded
