@@ -188,14 +188,22 @@ This is the highest-value phase. Everything before it existed to make this phase
       fed back for ≤ N repair iterations, then fails loudly (`SynthError::Unconverged`).
 - [x] **Run + deploy entrypoint.** ✅ `gaussflow_synth::run` executes a confirmed spec on the
       canonical runtime (no database). CLI: `gaussflow synth "<prompt>" [--run]`.
-- [x] **Confirmation (first cut).** ✅ `SynthesisResult::explanation` renders a per-step,
-      provenance-bearing plan; the CLI prints it and the spec before `--run`. *Remaining: a rich
-      edit/regenerate UX and cost/latency/side-effect estimates.*
+- [x] **Confirmation + estimates.** ✅ `SynthesisResult::explanation` renders a per-step,
+      provenance-bearing plan, and `PlanEstimate` reports node count, model-invocation upper bound
+      (incl. agent budgets), and whether the workflow makes external calls. The CLI prints both
+      before `--run`, and `--save <path>` writes the spec for hand-editing.
+- [x] **Edit → re-validate.** ✅ `validate_plan()` re-runs the deterministic catalog + lower + DAG
+      validation on a (hand-)edited `PlanIR` with no LLM; `PlanIR` has edit helpers
+      (`set_param`/`add_step`/`remove_step` with reference scrubbing). `Synthesizer::regenerate`
+      re-synthesizes with user feedback.
+- [x] **Synthesis benchmark suite.** ✅ `gaussflow-synth/tests/benchmark.rs`: a 7-case corpus
+      (one capability each + a repair case) pushed through synthesize → validate → run, reporting
+      first-pass validation rate, avg repair iterations, and run-success rate with regression-gate
+      asserts (currently 100% validated, 100% run, 86% first-pass). *Measuring real planning
+      quality needs a live provider; the corpus uses canned plans as stand-ins.*
 - [ ] **Deploy hardening.** Persist confirmed, versioned, immutable specs; resolve providers and
       secrets from the secrets manager; reserve quotas; register triggers; trace runs back to the
       originating prompt.
-- [ ] **Synthesis benchmark suite.** A prompt corpus with expected capabilities; track first-pass
-      validation rate, repair iterations, and run-success rate as regression gates.
 - [ ] **Real planning provider.** Planning needs a capable LLM; wire Anthropic/OpenAI for live use
       (offline tests use a scripted stub provider).
 

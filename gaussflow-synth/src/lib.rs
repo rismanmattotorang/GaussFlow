@@ -60,6 +60,26 @@ pub struct SynthesisResult {
     pub spec_json: String,
     /// A plain-language description of the proposed workflow, for human review.
     pub explanation: String,
+    /// A cost/latency/side-effect estimate to show before the user confirms.
+    pub estimate: PlanEstimate,
+}
+
+/// A rough, deterministic estimate of a plan's cost/latency/side-effects, shown at confirm time.
+///
+/// Counts are static (derived from node types and budgets), not measured. Nested sub-workflows
+/// inside `subgraph`/`parallel` are not recursed into for v1 (noted in `summary`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanEstimate {
+    /// Number of nodes in the workflow.
+    pub node_count: usize,
+    /// Direct `llm_call` nodes (one model invocation each).
+    pub llm_call_count: usize,
+    /// Upper bound on model invocations: `llm_call` nodes plus each `agent`'s `max_steps` budget.
+    pub max_model_invocations: usize,
+    /// Whether the workflow can make external/network calls (any `llm_call` or `agent`).
+    pub makes_external_calls: bool,
+    /// A human-readable one-line summary.
+    pub summary: String,
 }
 
 /// Errors from the synthesis pipeline.
@@ -71,6 +91,10 @@ pub enum SynthError {
     /// The model's output could not be parsed into a plan.
     #[error("could not parse a plan from the model output: {0}")]
     PlanParse(String),
+    /// The plan is structurally invalid (unsupported capability, empty, or fails DAG validation).
+    /// This is the repairable error the synthesis loop feeds back to the planner.
+    #[error("invalid plan: {0}")]
+    InvalidPlan(String),
     /// Synthesis did not produce a valid workflow within the repair budget.
     #[error("synthesis did not converge after {0} repair attempt(s); last error: {1}")]
     Unconverged(usize, String),
@@ -110,52 +134,39 @@ impl<'a> Synthesizer<'a> {
 
     /// Run the pipeline: plan → lower → validate, with bounded self-repair on failure.
     pub async fn synthesize(&self, req: &SynthesisRequest) -> Result<SynthesisResult, SynthError> {
-        let allowed = effective_catalog(&req.constraints);
-        let mut feedback: Option<String> = None;
+        self.synthesize_seeded(req, None).await
+    }
+
+    /// Re-synthesize, seeding the planner with the user's `feedback` (e.g. "use a cheaper model"
+    /// or "add a validation step"). This is the "regenerate with feedback" path of the confirm UX.
+    pub async fn regenerate(
+        &self,
+        req: &SynthesisRequest,
+        feedback: &str,
+    ) -> Result<SynthesisResult, SynthError> {
+        self.synthesize_seeded(req, Some(feedback.to_string()))
+            .await
+    }
+
+    async fn synthesize_seeded(
+        &self,
+        req: &SynthesisRequest,
+        seed_feedback: Option<String>,
+    ) -> Result<SynthesisResult, SynthError> {
+        let mut feedback = seed_feedback;
         let mut last_err = String::from("no attempts were made");
 
         for _ in 0..=self.max_repairs {
             let plan = self.request_plan(req, feedback.as_deref()).await?;
 
-            // Capability honesty: only emit node types the runtime can execute.
-            if let Some(bad) = plan
-                .steps
-                .iter()
-                .find(|s| !allowed.iter().any(|c| c == &s.capability))
-            {
-                last_err = format!("capability '{}' is not supported", bad.capability);
-                feedback = Some(format!(
-                    "{last_err}. Use only these capabilities: {}.",
-                    allowed.join(", ")
-                ));
-                continue;
-            }
-            if plan.steps.is_empty() {
-                last_err = "the plan had no steps".to_string();
-                feedback = Some(format!("{last_err}; produce at least one step."));
-                continue;
-            }
-
-            let spec = lower(&plan);
-            let spec_json = serde_json::to_string(&spec)?;
-
-            // The same validator a hand-authored graph passes through.
-            match gaussflow_core::TypeSafeDag::from_json(&spec_json) {
-                Ok(_) => {
-                    let explanation = explain(&plan, req);
-                    return Ok(SynthesisResult {
-                        plan,
-                        spec,
-                        spec_json,
-                        explanation,
-                    });
+            // Reuse the deterministic, offline validation path (catalog + lower + DAG validate).
+            match validate_plan(&plan, &req.constraints, &req.goal) {
+                Ok(result) => return Ok(result),
+                Err(SynthError::InvalidPlan(msg)) => {
+                    last_err = msg.clone();
+                    feedback = Some(format!("{msg}. Fix it and try again."));
                 }
-                Err(e) => {
-                    last_err = e.to_string();
-                    feedback = Some(format!(
-                        "the workflow failed validation: {last_err}. Fix it."
-                    ));
-                }
+                Err(other) => return Err(other),
             }
         }
 
@@ -268,11 +279,106 @@ pub fn lower(plan: &PlanIR) -> Value {
     })
 }
 
+/// Validate a (possibly hand-edited) plan and produce a confirmable [`SynthesisResult`].
+///
+/// Deterministic and offline — no LLM. This is the **edit → re-validate** path: edit a [`PlanIR`]
+/// (see its helper methods) then call this to lower it, run it through the same `TypeSafeDag`
+/// validator a hand-authored graph uses, and compute the explanation + estimate. Returns
+/// [`SynthError::InvalidPlan`] for an unsupported capability, an empty plan, or a DAG that fails
+/// validation (e.g. a cycle or a dangling edge).
+pub fn validate_plan(
+    plan: &PlanIR,
+    constraints: &Constraints,
+    goal: &str,
+) -> Result<SynthesisResult, SynthError> {
+    if plan.steps.is_empty() {
+        return Err(SynthError::InvalidPlan(
+            "the plan has no steps; produce at least one".to_string(),
+        ));
+    }
+
+    let allowed = effective_catalog(constraints);
+    if let Some(bad) = plan
+        .steps
+        .iter()
+        .find(|s| !allowed.iter().any(|c| c == &s.capability))
+    {
+        return Err(SynthError::InvalidPlan(format!(
+            "capability '{}' is not supported; use only: {}",
+            bad.capability,
+            allowed.join(", ")
+        )));
+    }
+
+    let spec = lower(plan);
+    let spec_json = serde_json::to_string(&spec)?;
+
+    // The same validator a hand-authored graph passes through.
+    gaussflow_core::TypeSafeDag::from_json(&spec_json)
+        .map_err(|e| SynthError::InvalidPlan(format!("the workflow failed validation: {e}")))?;
+
+    Ok(SynthesisResult {
+        explanation: explain(plan, goal),
+        estimate: estimate(plan),
+        plan: plan.clone(),
+        spec,
+        spec_json,
+    })
+}
+
+/// Compute a deterministic cost/latency/side-effect estimate for a plan.
+pub fn estimate(plan: &PlanIR) -> PlanEstimate {
+    let node_count = plan.steps.len();
+    let llm_call_count = plan
+        .steps
+        .iter()
+        .filter(|s| s.capability == "llm_call")
+        .count();
+    let agent_budget: usize = plan
+        .steps
+        .iter()
+        .filter(|s| s.capability == "agent")
+        .map(|s| {
+            s.params
+                .get("max_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5) as usize
+        })
+        .sum();
+    let agent_count = plan
+        .steps
+        .iter()
+        .filter(|s| s.capability == "agent")
+        .count();
+    let max_model_invocations = llm_call_count + agent_budget;
+    let makes_external_calls = llm_call_count > 0 || agent_count > 0;
+    let has_nested = plan
+        .steps
+        .iter()
+        .any(|s| s.capability == "subgraph" || s.capability == "parallel");
+
+    let mut summary = format!(
+        "{node_count} node(s); up to {max_model_invocations} model call(s); external calls: {}",
+        if makes_external_calls { "yes" } else { "no" }
+    );
+    if has_nested {
+        summary.push_str(" (excludes nested sub-workflows)");
+    }
+
+    PlanEstimate {
+        node_count,
+        llm_call_count,
+        max_model_invocations,
+        makes_external_calls,
+        summary,
+    }
+}
+
 /// Produce a plain-language description of the plan for the human confirmation step, with
 /// per-step provenance back to the goal.
-fn explain(plan: &PlanIR, req: &SynthesisRequest) -> String {
+fn explain(plan: &PlanIR, goal: &str) -> String {
     let mut s = String::new();
-    s.push_str(&format!("Goal: {}\n", req.goal));
+    s.push_str(&format!("Goal: {}\n", goal));
     s.push_str(&format!(
         "Proposed workflow \"{}\" with {} step(s):\n",
         if plan.name.is_empty() {

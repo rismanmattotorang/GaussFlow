@@ -29,6 +29,10 @@ pub struct SynthCommand {
     /// JSON input to pass to the run (used with --run)
     #[arg(long)]
     pub input: Option<String>,
+
+    /// Write the synthesized workflow spec to a file (for editing, then `gaussflow run <file>`)
+    #[arg(long, value_name = "PATH")]
+    pub save: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -520,12 +524,20 @@ pub async fn synthesize_workflow(
         .await
         .map_err(|e| anyhow::anyhow!("Synthesis failed: {e}"))?;
 
-    // Confirmation view: show the human-readable plan and the concrete workflow it compiled to.
+    // Confirmation view: the human-readable plan, the cost/latency estimate, and the spec.
     pb.set_message("Synthesis complete");
     println!("\n{}", style("Proposed plan").bold().underlined());
     println!("{}", result.explanation);
-    println!("{}", style("Workflow specification").bold().underlined());
+    println!("{} {}", style("Estimate:").bold(), result.estimate.summary);
+    println!("\n{}", style("Workflow specification").bold().underlined());
     println!("{}", serde_json::to_string_pretty(&result.spec)?);
+
+    if let Some(path) = &cmd.save {
+        tokio::fs::write(path, &result.spec_json)
+            .await
+            .with_context(|| format!("failed to write spec to {}", path.display()))?;
+        println!("\n{} {}", style("Saved spec to").green(), path.display());
+    }
 
     if cmd.run {
         pb.set_message("Deploying and running the synthesized workflow...");
