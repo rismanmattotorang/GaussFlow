@@ -19,13 +19,14 @@ shows you the plan, and — on your confirmation — deploys and runs it.*
 ---
 
 > **⚠️ Project status: Technology Preview (Alpha).**
-> **Phase 0 (build + secure + CI) is complete:** `cargo build --workspace` and
-> `cargo test --workspace` are green (with `protoc` installed), CI gates both on every PR, and the
-> hardcoded secrets have been purged in favour of environment-sourced credentials. The design —
-> the typed DAG model and a single-machine Rust runtime — is in place. The flagship
-> **prompt-to-DAG synthesis layer** that defines the product vision is **not yet implemented** and
-> is the next major milestone. For a verified, file-level breakdown of what works versus what is
-> aspirational, read the **[Code Evaluation](docs/CODE_EVALUATION.md)**. For the architecture of
+> **Phases 0–2 are complete:** the workspace builds and tests green (CI-gated, `protoc` required),
+> secrets are environment-sourced, the core is consolidated to one model + one engine that runs
+> with **no database**, and **all eight node types are implemented** (llm_call, agent, ensemble,
+> router, subgraph, data_processor, conditional, parallel) with conditional/router branch skipping
+> and ensemble fan-in. The flagship **prompt-to-DAG synthesis layer** that defines the product
+> vision is **not yet implemented** and is the next major milestone. For a verified, file-level
+> breakdown of what works versus what is aspirational, read the
+> **[Code Evaluation](docs/CODE_EVALUATION.md)**. For the architecture of
 > the synthesis layer, see the **[Synthesis Pipeline](docs/SYNTHESIS_PIPELINE.md)**. For the path
 > to 1.0, see the **[Production Roadmap](docs/PRODUCTION_ROADMAP.md)**.
 
@@ -109,6 +110,8 @@ capability stands today, evaluated against the product vision above.
 | Data-processor / conditional nodes | ✅ **Working** | Real deterministic transforms (`extract`/`set`) and comparisons (`eq`/`gt`/…); tested offline |
 | Conditional/router branching | ✅ **Working** | Engine traverses edges by `on` label and skips untaken branches; `router` selects by input field; `subgraph` runs a nested workflow |
 | Ensemble fan-in (named ports) | ✅ **Working** | Handlers receive per-predecessor outputs; `ensemble` aggregates via `collect`/`first`/`vote` |
+| Agent (bounded tool loop) | ✅ **Working** | Tool-use loop with a `max_steps` budget over the provider abstraction; built-in `echo`/`upper`/`sum` tools; offline-testable via a scripted directive list |
+| Parallel sub-workflows | ✅ **Working** | Runs inline `branches` concurrently on nested engines and collects results |
 | Resource control (CPU/GPU semaphores) | ✅ **Working** | Concurrency limits + per-node timeouts in the executor |
 | Retry with backoff (fixed/linear/exp) | ✅ **Working** | Per-node retry policy applied by the executor |
 | Run persistence (SurrealDB) | 🟡 **Partial** | Env-sourced creds; opt-in backend behind the `RunStore` trait |
@@ -116,7 +119,7 @@ capability stands today, evaluated against the product vision above.
 | Web dashboard + REST/WebSocket API | 🟡 **Partial** | API surface exists; execution path is *simulated* |
 | Python bindings (PyO3) | 🟡 **Partial** | `validate` + async `execute` exposed |
 | Terminal UI (TUI) | 🟡 **Partial** | Monitoring UI scaffold |
-| Agent / parallel nodes | 🟡 **In progress** | `agent` needs a tool/reasoning loop; `parallel` still a stub |
+| Anthropic / Ollama providers, streaming | 🔴 **Planned** | `LlmProvider` abstraction is in place (OpenAI + mock); more backends + token streaming are enhancements |
 | Content-addressable artifact store | 🔴 **Planned** | In-memory store works; SurrealDB store is a stub |
 | Distributed checkpointing & time-travel | 🔴 **Planned** | Types defined; backend not implemented |
 | RBAC, audit, SLA, compliance | 🔴 **Planned** | Config types defined; enforcement not implemented |
@@ -127,11 +130,11 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 > **The honest summary:** Phase 0 ✅ (builds + tests green, secrets removed, CI-gated) and Phase 1 ✅
 > (one data model, one execution engine, runs with **no database** and returns real outputs) are
 > done. Phase 2 is **in progress**: the LLM provider abstraction, the deterministic compute nodes
-> (data-processor, conditional), conditional/router **edge traversal with branch skipping**,
-> `subgraph` (nested workflows), and `ensemble` fan-in (via per-predecessor "named ports") are
-> real and tested; only `agent` (tool loop) and `parallel` remain. The *front door* — the
-> prompt-to-DAG compiler — comes after, on a runtime we now trust. The roadmap is sequenced
-> exactly that way.
+> done, and **Phase 2's exit criterion is met** — all eight node types (`llm_call`, `agent`,
+> `ensemble`, `router`, `subgraph`, `data_processor`, `conditional`, `parallel`) have real,
+> tested implementations, including conditional/router branch skipping and ensemble fan-in. The
+> remaining Phase 2 items are enhancements (more providers, streaming). Next is the *front door* —
+> the prompt-to-DAG compiler — on a runtime we now trust. The roadmap is sequenced exactly that way.
 
 ---
 
@@ -287,11 +290,11 @@ between the prompt-to-DAG compiler and the runtime:
 ```
 
 Supported node types in the core model: `llm_call`, `agent`, `ensemble`, `router`, `subgraph`,
-`data_processor`, `conditional`, `parallel`. Implemented today: `llm_call` (via the provider
-abstraction), `data_processor` (`extract`/`set`/`passthrough`), `conditional` (comparisons),
-`router` (field-based routing), `subgraph` (nested workflow), and `ensemble`
-(`collect`/`first`/`vote`). `agent` and `parallel` are still stubs pending the work noted in the
-status table above. The synthesis
+`data_processor`, `conditional`, `parallel`. **All eight are implemented:** `llm_call` (provider abstraction),
+`data_processor` (`extract`/`set`/`passthrough`), `conditional` (comparisons), `router`
+(field-based routing), `subgraph` (nested workflow), `ensemble` (`collect`/`first`/`vote`),
+`agent` (bounded tool loop), and `parallel` (concurrent sub-workflows). Remaining Phase 2 work is
+enhancements only — more LLM providers (Anthropic/Ollama) and token streaming. The synthesis
 layer can only safely emit node types that the runtime actually executes — which is why
 "make the node types real" precedes "ship the compiler" on the roadmap.
 

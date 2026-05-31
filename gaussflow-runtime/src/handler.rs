@@ -82,18 +82,118 @@ impl NodeHandler for LlmCallHandler {
     }
 }
 
+/// Built-in, deterministic agent tools (no network). Returns the tool's result value.
+fn run_tool(name: &str, args: &Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    match name {
+        // Echo the args straight back.
+        "echo" => Ok(args.clone()),
+        // Uppercase `args.text`.
+        "upper" => {
+            let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            Ok(json!({ "text": text.to_uppercase() }))
+        }
+        // Sum the numbers in `args.values`.
+        "sum" => {
+            let total: f64 = args
+                .get("values")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_f64()).sum())
+                .unwrap_or(0.0);
+            Ok(json!({ "sum": total }))
+        }
+        other => Err(format!("unknown tool '{other}'").into()),
+    }
+}
+
 #[derive(Debug)]
 pub struct AgentHandler;
 #[async_trait]
 impl NodeHandler for AgentHandler {
+    /// A bounded tool-use loop. On each step the agent gets a *directive* — JSON of the form
+    /// `{ "tool": <name>, "args": {…} }` (run a built-in tool and continue) or `{ "final": <x> }`
+    /// (stop with that answer). Directives come from the LLM provider, or, for deterministic
+    /// offline runs/tests, from a `script` param (an array of directives applied in order).
+    ///
+    /// Params: `task`, `max_steps` (default 5), optional `model`, optional `script`.
+    /// Built-in tools: `echo`, `upper`, `sum`.
     async fn execute(
         &self,
         node: &NodeSpec,
-        input: NodeInput,
+        _input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let task = node
+            .params
+            .get("task")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let max_steps = node
+            .params
+            .get("max_steps")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as usize;
+        let model = node
+            .params
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("gpt-3.5-turbo")
+            .to_string();
+        let script = node
+            .params
+            .get("script")
+            .and_then(|v| v.as_array())
+            .cloned();
+
+        let provider = provider_for(&model);
+        let mut scratchpad: Vec<Value> = Vec::new();
+        let mut answer = Value::Null;
+        let mut steps = 0usize;
+        let mut budget_exhausted = true;
+
+        for step in 0..max_steps {
+            steps = step + 1;
+            // Obtain the next directive: from the script if provided, else from the LLM.
+            let directive: Value = if let Some(s) = &script {
+                s.get(step)
+                    .cloned()
+                    .unwrap_or(json!({ "final": Value::Null }))
+            } else {
+                let prompt = format!(
+                    "Task: {task}\nScratchpad: {}",
+                    serde_json::to_string(&scratchpad).unwrap_or_default()
+                );
+                let req = CompletionRequest {
+                    model: model.clone(),
+                    prompt,
+                    system: Some(
+                        "You are an agent. Reply ONLY with JSON: {\"tool\":..,\"args\":..} or \
+                         {\"final\":..}."
+                            .to_string(),
+                    ),
+                    temperature: None,
+                };
+                let text = provider.complete(&req).await?;
+                serde_json::from_str(&text).unwrap_or(json!({ "final": text }))
+            };
+
+            if let Some(tool) = directive.get("tool").and_then(|t| t.as_str()) {
+                let args = directive.get("args").cloned().unwrap_or_else(|| json!({}));
+                let result = run_tool(tool, &args)?;
+                scratchpad.push(json!({ "tool": tool, "args": args, "result": result }));
+                continue;
+            }
+            // No tool requested → treat as the final answer.
+            answer = directive.get("final").cloned().unwrap_or(directive);
+            budget_exhausted = false;
+            break;
+        }
+
         Ok(json!({
             "agent": node.id,
-            "state": input.merged,
+            "steps": steps,
+            "answer": answer,
+            "scratchpad": scratchpad,
+            "budget_exhausted": budget_exhausted,
         }))
     }
 }
@@ -354,14 +454,46 @@ pub struct ParallelHandler;
 
 #[async_trait]
 impl NodeHandler for ParallelHandler {
+    /// Runs several inline sub-workflows concurrently, each fed this node's merged input, and
+    /// collects their outputs in declaration order.
+    ///
+    /// Params: `branches` — an array of inline workflow specs.
     async fn execute(
         &self,
         node: &NodeSpec,
         input: NodeInput,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let branches = node
+            .params
+            .get("branches")
+            .and_then(|v| v.as_array())
+            .ok_or("parallel requires a 'branches' array of inline workflow specs")?;
+
+        // Spawn each branch concurrently on its own in-memory engine.
+        let mut handles = Vec::with_capacity(branches.len());
+        for branch in branches {
+            let wf_json = serde_json::to_string(branch)?;
+            let branch_input = input.merged.clone();
+            handles.push(tokio::spawn(async move {
+                let dag = gaussflow_core::TypeSafeDag::from_json(&wf_json)
+                    .map_err(|e| format!("parallel: invalid branch workflow: {e}"))?;
+                let store = crate::InMemoryRunStore::new();
+                crate::execute_with_store(dag, branch_input, &store)
+                    .await
+                    .map_err(|e| e.to_string())
+            }));
+        }
+
+        let mut results = Vec::with_capacity(handles.len());
+        for h in handles {
+            let branch_result = h.await.map_err(|e| e.to_string())??;
+            results.push(branch_result.get("output").cloned().unwrap_or(Value::Null));
+        }
+
         Ok(json!({
             "parallel": node.id,
-            "input": input.merged,
+            "count": results.len(),
+            "results": results,
         }))
     }
 }

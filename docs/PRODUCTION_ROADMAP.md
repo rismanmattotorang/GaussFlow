@@ -116,9 +116,10 @@ complete.**
 
 ---
 
-## Phase 2 — Make the node types real (Weeks 5–9) 🤖 capability — in progress
+## Phase 2 — Make the node types real (Weeks 5–9) 🤖 capability ✅ exit criterion met
 
-*Objective: deliver the node types the product promises.*
+*Objective: deliver the node types the product promises. **All eight `NodeType` variants now have
+real implementations**; the remaining items (extra providers, streaming) are enhancements.*
 
 - [x] **LLM provider abstraction.** ✅ `gaussflow-runtime/src/provider.rs` defines an `LlmProvider`
       trait; the OpenAI handler is refactored behind it (`OpenAiProvider`), and a deterministic,
@@ -146,15 +147,18 @@ complete.**
 - [x] **Ensemble node.** ✅ `EnsembleHandler` aggregates its members via `strategy`:
       `collect` (default), `first`, and `vote` (majority over a `field`, with full tally). Covered
       by the `ensemble` tests.
-- [ ] **Agent node.** A real tool-use/reasoning loop with a bounded step budget (on the provider
-      abstraction).
-- [ ] **Parallel node.** Currently a passthrough stub.
-- [ ] **More providers.** Real Anthropic + local/Ollama providers behind `LlmProvider`.
-- [ ] **Streaming.** Token streaming for LLM nodes surfaced over the API/WebSocket.
+- [x] **Agent node.** ✅ `AgentHandler` is a bounded tool-use loop: each step takes a directive
+      (`{tool,args}` → run a built-in tool and continue, or `{final}` → stop) from the LLM provider
+      or, for deterministic offline runs/tests, from a `script` param. Honors a `max_steps` budget;
+      built-in tools `echo`/`upper`/`sum`. Covered by the `agent_parallel` tests.
+- [x] **Parallel node.** ✅ `ParallelHandler` runs an array of inline `branches` concurrently (each
+      on its own in-memory engine) and collects their outputs in order.
+- [ ] **More providers.** Real Anthropic + local/Ollama providers behind `LlmProvider`. *(enhancement)*
+- [ ] **Streaming.** Token streaming for LLM nodes surfaced over the API/WebSocket. *(enhancement)*
 
-**Exit criteria:** every node type in `NodeType` either has a real implementation or is removed
-from the public enum and docs. **Done so far:** `llm_call`, `data_processor`, `conditional`,
-`router`, `subgraph`, `ensemble`. **Remaining:** `agent`, `parallel`.
+**Exit criteria:** ✅ **met** — every `NodeType` variant has a real implementation: `llm_call`,
+`agent`, `ensemble`, `router`, `subgraph`, `data_processor`, `conditional`, `parallel`. The
+remaining provider/streaming items are enhancements, not blockers.
 
 ---
 
