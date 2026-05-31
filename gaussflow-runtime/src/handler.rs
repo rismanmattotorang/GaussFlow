@@ -1,6 +1,6 @@
+use crate::provider::{provider_for, CompletionRequest};
 use async_trait::async_trait;
 use gaussflow_core::model::{NodeConfig, NodeSpec, NodeType};
-use reqwest::Client;
 use serde_json::{json, Value};
 
 #[async_trait]
@@ -41,43 +41,28 @@ impl NodeHandler for LlmCallHandler {
                 .map(|t| t as f32),
         };
 
-        // Build request body
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": node.params.get("prompt").cloned().unwrap_or(Value::String("Hello".into()))}
-            ]
-        });
+        let prompt = node
+            .params
+            .get("prompt")
+            .and_then(|p| p.as_str())
+            .unwrap_or("Hello")
+            .to_string();
 
-        // Add temperature if specified
-        if let Some(temp) = temperature {
-            body["temperature"] = json!(temp);
-        }
-
-        let api_key = std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set")?;
-        let client = Client::new();
-        let resp = client
-            .post("https://api.openai.com/v1/chat/completions")
-            .bearer_auth(api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to send request to OpenAI API: {}", e))?
-            .error_for_status()
-            .map_err(|e| format!("OpenAI API returned an error: {}", e))?
-            .json::<serde_json::Value>()
-            .await
-            .map_err(|e| format!("Failed to parse OpenAI API response: {}", e))?;
-
-        let answer = resp["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or("Invalid response format from OpenAI API")?;
+        // Dispatch through the provider abstraction (OpenAI, mock, ...).
+        let provider = provider_for(model);
+        let req = CompletionRequest {
+            model: model.to_string(),
+            prompt,
+            system: None,
+            temperature,
+        };
+        let answer = provider.complete(&req).await?;
 
         Ok(json!({
             "llm_call": node.id,
             "model": model,
-            "answer": answer
+            "provider": provider.name(),
+            "answer": answer,
         }))
     }
 }
@@ -137,14 +122,49 @@ pub struct DataProcessorHandler;
 
 #[async_trait]
 impl NodeHandler for DataProcessorHandler {
+    /// Deterministic data transforms selected by the `op` param:
+    /// - `passthrough` (default): emit the input unchanged under `result`.
+    /// - `extract`: emit `input[field]` under `result` (`null` if absent).
+    /// - `set`: shallow-merge the object in the `value` param over the input.
     async fn execute(
         &self,
         node: &NodeSpec,
-        _input: Value,
+        input: Value,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let op = node
+            .params
+            .get("op")
+            .and_then(|v| v.as_str())
+            .unwrap_or("passthrough");
+
+        let result = match op {
+            "extract" => {
+                let field = node
+                    .params
+                    .get("field")
+                    .and_then(|v| v.as_str())
+                    .ok_or("data_processor 'extract' requires a string 'field' param")?;
+                input.get(field).cloned().unwrap_or(Value::Null)
+            }
+            "set" => {
+                let mut merged = input.clone();
+                if let (Some(obj), Some(patch)) = (
+                    merged.as_object_mut(),
+                    node.params.get("value").and_then(|v| v.as_object()),
+                ) {
+                    for (k, v) in patch {
+                        obj.insert(k.clone(), v.clone());
+                    }
+                }
+                merged
+            }
+            _ => input,
+        };
+
         Ok(json!({
             "data_processor": node.id,
-            "input": _input
+            "op": op,
+            "result": result,
         }))
     }
 }
@@ -155,14 +175,54 @@ pub struct ConditionalHandler;
 
 #[async_trait]
 impl NodeHandler for ConditionalHandler {
+    /// Evaluates a single comparison over the input and reports the outcome.
+    ///
+    /// Params: `field` (path into the input object), `op` (`eq`|`ne`|`gt`|`lt`|`ge`|`le`), and
+    /// `value` to compare against. Numbers compare numerically; `eq`/`ne` also work for any JSON
+    /// value. Emits `{ matched, branch }` where `branch` is `"true"`/`"false"`.
+    ///
+    /// NOTE: this computes the decision; engine-level *edge skipping* based on the branch is a
+    /// follow-up (conditional edge traversal) tracked in the roadmap.
     async fn execute(
         &self,
         node: &NodeSpec,
-        _input: Value,
+        input: Value,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let field = node
+            .params
+            .get("field")
+            .and_then(|v| v.as_str())
+            .ok_or("conditional requires a string 'field' param")?;
+        let op = node
+            .params
+            .get("op")
+            .and_then(|v| v.as_str())
+            .unwrap_or("eq");
+        let expected = node.params.get("value").cloned().unwrap_or(Value::Null);
+        let actual = input.get(field).cloned().unwrap_or(Value::Null);
+
+        let matched = match op {
+            "eq" => actual == expected,
+            "ne" => actual != expected,
+            "gt" | "lt" | "ge" | "le" => {
+                match (actual.as_f64(), expected.as_f64()) {
+                    (Some(a), Some(e)) => match op {
+                        "gt" => a > e,
+                        "lt" => a < e,
+                        "ge" => a >= e,
+                        _ => a <= e,
+                    },
+                    // Non-numeric operands can't be ordered.
+                    _ => false,
+                }
+            }
+            other => return Err(format!("conditional: unsupported op '{other}'").into()),
+        };
+
         Ok(json!({
             "conditional": node.id,
-            "input": _input
+            "matched": matched,
+            "branch": if matched { "true" } else { "false" },
         }))
     }
 }

@@ -12,6 +12,7 @@ use tracing::{error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
+pub mod provider;
 pub mod store;
 pub use store::{InMemoryRunStore, RunStore, SurrealRunStore};
 
@@ -160,12 +161,15 @@ pub async fn execute_with(
         }
         let n = &dag.graph[nx];
 
-        // Basic input assembly: merge outputs of all predecessors.
+        // Input assembly: merge the outputs of all predecessors. Source nodes (no predecessors)
+        // receive the workflow's run input, so input flows into the graph at its roots.
         let predecessors = dag
             .graph
             .neighbors_directed(nx, petgraph::Direction::Incoming);
         let mut merged_input = json!({});
+        let mut had_predecessor = false;
         for p_nx in predecessors {
+            had_predecessor = true;
             if let Some(output) = outputs.get(&dag.graph[p_nx].id) {
                 if let Some(obj) = output.as_object() {
                     for (k, v) in obj {
@@ -173,6 +177,9 @@ pub async fn execute_with(
                     }
                 }
             }
+        }
+        if !had_predecessor {
+            merged_input = outputs.get("input").cloned().unwrap_or_else(|| json!({}));
         }
 
         let handler = resolve(&n.node_type);

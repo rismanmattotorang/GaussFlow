@@ -105,7 +105,8 @@ capability stands today, evaluated against the product vision above.
 | Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core` compiles and validates (cycle/type checks) — the synthesis *target* |
 | Topological single-machine execution | ✅ **Working** | One canonical engine (`gaussflow_runtime::execute_with_store`); runs with **no database** and returns real per-node outputs |
 | Run with **no external dependencies** | ✅ **Working** | `RunStore` trait + in-memory default; SurrealDB is opt-in via `GAUSSFLOW_RUN_STORE=surreal` |
-| LLM node (OpenAI Chat Completions) | ✅ **Working** | Real OpenAI call in `handler.rs`; reads `OPENAI_API_KEY` from env |
+| LLM node + provider abstraction | ✅ **Working** | `LlmProvider` trait; OpenAI provider + deterministic offline `MockProvider` (no API key needed for `mock*` models). Anthropic/Ollama planned |
+| Data-processor / conditional nodes | ✅ **Working** | Real deterministic transforms (`extract`/`set`) and comparisons (`eq`/`gt`/…); tested offline |
 | Resource control (CPU/GPU semaphores) | ✅ **Working** | Concurrency limits + per-node timeouts in the executor |
 | Retry with backoff (fixed/linear/exp) | ✅ **Working** | Per-node retry policy applied by the executor |
 | Run persistence (SurrealDB) | 🟡 **Partial** | Env-sourced creds; opt-in backend behind the `RunStore` trait |
@@ -113,7 +114,7 @@ capability stands today, evaluated against the product vision above.
 | Web dashboard + REST/WebSocket API | 🟡 **Partial** | API surface exists; execution path is *simulated* |
 | Python bindings (PyO3) | 🟡 **Partial** | `validate` + async `execute` exposed |
 | Terminal UI (TUI) | 🟡 **Partial** | Monitoring UI scaffold |
-| Agent / ensemble / router node logic | 🔴 **Planned** | Currently echo/passthrough stubs |
+| Agent / ensemble / router nodes | 🟡 **In progress** | Need engine support: conditional edge traversal (router), per-predecessor inputs (ensemble), tool loops (agent), nested engine (subgraph) |
 | Content-addressable artifact store | 🔴 **Planned** | In-memory store works; SurrealDB store is a stub |
 | Distributed checkpointing & time-travel | 🔴 **Planned** | Types defined; backend not implemented |
 | RBAC, audit, SLA, compliance | 🔴 **Planned** | Config types defined; enforcement not implemented |
@@ -123,9 +124,11 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 
 > **The honest summary:** Phase 0 ✅ (builds + tests green, secrets removed, CI-gated) and Phase 1 ✅
 > (one data model, one execution engine, runs with **no database** and returns real outputs) are
-> done. What remains is making the node types real (Phase 2 — agent/router/ensemble are still
-> passthrough stubs) and then building the *front door* — the prompt-to-DAG compiler — on top of a
-> runtime we now trust. The roadmap is sequenced exactly that way.
+> done. Phase 2 is **in progress**: the LLM provider abstraction and the deterministic compute
+> nodes (data-processor, conditional) are real and tested; agent/router/ensemble/subgraph still
+> need deeper engine support (conditional edge traversal, per-predecessor inputs, tool loops,
+> nested engines). The *front door* — the prompt-to-DAG compiler — comes after, on a runtime we
+> now trust. The roadmap is sequenced exactly that way.
 
 ---
 
@@ -281,8 +284,10 @@ between the prompt-to-DAG compiler and the runtime:
 ```
 
 Supported node types in the core model: `llm_call`, `agent`, `ensemble`, `router`, `subgraph`,
-`data_processor`, `conditional`, `parallel`. Only `llm_call` has a full implementation today;
-the others currently behave as passthrough handlers (see the status table above). The synthesis
+`data_processor`, `conditional`, `parallel`. Implemented today: `llm_call` (via the provider
+abstraction), `data_processor` (`extract`/`set`/`passthrough`), and `conditional` (comparisons).
+`agent`/`ensemble`/`router`/`subgraph`/`parallel` are still stubs pending the engine work noted in
+the status table above. The synthesis
 layer can only safely emit node types that the runtime actually executes — which is why
 "make the node types real" precedes "ship the compiler" on the roadmap.
 

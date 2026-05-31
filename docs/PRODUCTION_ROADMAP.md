@@ -116,19 +116,33 @@ complete.**
 
 ---
 
-## Phase 2 — Make the node types real (Weeks 5–9) 🤖 capability
+## Phase 2 — Make the node types real (Weeks 5–9) 🤖 capability — in progress
 
 *Objective: deliver the node types the product promises.*
 
-- [ ] **LLM provider abstraction.** Define a `Provider` trait; refactor the OpenAI handler
-      behind it. Add at least one more provider (Anthropic) and a local/Ollama option.
+- [x] **LLM provider abstraction.** ✅ `gaussflow-runtime/src/provider.rs` defines an `LlmProvider`
+      trait; the OpenAI handler is refactored behind it (`OpenAiProvider`), and a deterministic,
+      offline `MockProvider` enables tests/local runs with no API key (`provider_for` selects by
+      model name / `GAUSSFLOW_LLM_PROVIDER`). *Remaining: real Anthropic + local/Ollama providers.*
+- [x] **Source-node input flow.** ✅ (engine prerequisite discovered in Phase 2) Source nodes now
+      receive the workflow run input; previously they got an empty object.
+- [x] **Data/transform nodes.** ✅ `DataProcessor` performs real deterministic transforms
+      (`passthrough` / `extract` / `set`); `Conditional` evaluates real comparisons
+      (`eq`/`ne`/`gt`/`lt`/`ge`/`le`) and emits a `matched`/`branch` decision. Covered by the
+      `node_handlers` tests.
+- [ ] **Conditional/Router edge traversal.** Engine prerequisite: traverse outgoing edges by their
+      `on`/condition and **skip** nodes whose inbound branch wasn't taken. Today the engine runs
+      every node in topological order; `Conditional` computes the decision but the engine does not
+      yet skip branches. This unlocks real `Router` and branch semantics.
+- [ ] **Ensemble node.** Needs per-predecessor inputs (named ports) — the engine currently
+      shallow-merges all predecessor outputs into one object, which is lossy for fan-in. Add
+      per-predecessor inputs, then pluggable aggregation (vote / concat / reduce).
 - [ ] **Router node.** Real provider/branch selection from policy (cost, capability, edge
-      conditions). Implement edge `condition` evaluation (`${input.score > 0.7}`).
-- [ ] **Ensemble node.** Parallel fan-out to N children + pluggable aggregation
-      (vote / concat / reduce).
-- [ ] **Agent node.** A real tool-use/reasoning loop with a bounded step budget.
-- [ ] **Subgraph node.** Spawn a nested engine instance and stitch results back.
-- [ ] **Data/transform/conditional/parallel nodes.** Implement the deterministic compute nodes.
+      conditions), built on the edge-traversal work above.
+- [ ] **Agent node.** A real tool-use/reasoning loop with a bounded step budget (on the provider
+      abstraction).
+- [ ] **Subgraph node.** Spawn a nested engine instance (`execute_with_store`) and stitch results
+      back. (Dispatch currently aliases Subgraph to the agent stub.)
 - [ ] **Streaming.** Token streaming for LLM nodes surfaced over the API/WebSocket.
 
 **Exit criteria:** every node type in `NodeType` either has a real implementation or is removed
