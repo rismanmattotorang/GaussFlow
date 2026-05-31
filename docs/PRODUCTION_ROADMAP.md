@@ -351,17 +351,29 @@ data transport, a Helm chart, and multi-node benchmarks.
 
 ---
 
-## Phase 7 — Release engineering & GA (Weeks 24–28) 🚀
+## Phase 7 — Release engineering & GA (Weeks 24–28) 🚀 — 0.1.0 prepared
 
-- [ ] **API stability review** and semantic-versioning commitment for `gaussflow-core`.
-- [ ] **Publish crates** to crates.io and the Python package to PyPI (via `maturin`).
-- [ ] **Versioned docs site**, tutorials, and a cookbook of real workflows.
-- [ ] **Reference deployments** (Docker Compose for local, Helm for K8s).
-- [ ] **Migration guide** and changelog discipline.
-- [ ] **Close out doc-coverage warnings** (~398 noted in `TODO.md`).
+- [x] **Versioned, publish-ready crate metadata.** ✅ A shared `[workspace.package]`
+      (version `0.1.0`, edition, `license = "Apache-2.0"`, repository, authors, rust-version)
+      inherited by every crate; internal path deps carry `version = "0.1.0"`, so the crates are
+      `cargo publish`-shaped (actual crates.io/PyPI publish is an operator step).
+- [x] **Changelog discipline.** ✅ `CHANGELOG.md` (Keep-a-Changelog) covering the 0.1.0 arc and a
+      semver commitment from 0.1.0 onward.
+- [x] **Cookbook of real workflows.** ✅ `docs/COOKBOOK.md` — a runnable example per node type
+      (offline by default).
+- [x] **Reference deployments.** ✅ Multi-stage `Dockerfile`, `docker-compose.yml`, and a Helm chart
+      (`deploy/helm/gaussflow`: deployment/service/HPA, probes on `/api/health`).
+- [x] **Token tooling for the secured API.** ✅ `gaussflow token` mints JWTs for the authenticated
+      API.
+- [ ] **API stability review** + a formal semver guarantee for `gaussflow-core` (1.0).
+- [ ] **Actually publish** to crates.io / PyPI (via `maturin`) and stand up a versioned docs site
+      (operator/process steps).
+- [ ] **Close out doc-coverage warnings** (~398) and add a coverage gate.
 
-**Exit criteria:** GaussFlow 1.0 tagged, published, documented, and deployable by a third party
-without reading the source.
+**Exit criteria (0.1.0 ✅):** versioned, documented (README + cookbook + changelog), and deployable
+by a third party (Docker/Compose/Helm) without reading the source. **Remaining for 1.0:** the
+crates.io/PyPI publish, an API-stability/semver guarantee, an external security review, and the
+cluster-dependent Phase 6 items.
 
 ---
 

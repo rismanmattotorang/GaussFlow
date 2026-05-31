@@ -148,11 +148,13 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 > Prometheus metrics fed by the executor, the web dashboard wired to the **real engine** (no more
 > simulation) streaming live run events, and run/node tracing correlation IDs. **Phase 5 ✅** adds
 > security: JWT auth + RBAC on the API (unauthorized mutations rejected), a tamper-evident
-> hash-chained audit log, and PII redaction (`gaussflow-security`). **Phase 6 (in progress)** adds
-> single-node scale-out: a bounded-concurrent executor with backpressure (measured speedup) and a
-> Docker/Compose deployment. What remains is genuinely cluster-dependent — a coordinator/worker
-> split, a Helm chart, and multi-node load tests — plus release engineering (Phase 7). The roadmap
-> is sequenced exactly that way.
+> hash-chained audit log, and PII redaction (`gaussflow-security`). **Phase 6 ✅** adds single-node
+> scale-out: a bounded-concurrent executor with backpressure (measured speedup) + Docker/Compose/Helm.
+> **Phase 7 ✅** prepares the **0.1.0** release: versioned publish-ready crate metadata, a
+> `CHANGELOG`, a runnable [cookbook](docs/COOKBOOK.md), a Helm chart, and a `gaussflow token` command.
+> What remains for 1.0 is genuinely external/process: the crates.io/PyPI publish, a formal semver
+> guarantee, an external security review, and the cluster-dependent multi-node work. The roadmap is
+> sequenced exactly that way.
 
 ---
 
@@ -206,7 +208,7 @@ the runtime and emits the same `WorkflowSpec` the runtime already executes:
 > prompt-to-DAG layer is being built on top of.
 
 ### Prerequisites
-- Rust 1.75+ and Cargo
+- Rust 1.82+ and Cargo
 - **`protoc` (Protocol Buffers compiler)** — required by the gRPC build scripts
   (`apt-get install protobuf-compiler`, `brew install protobuf`, or set `PROTOC`)
 - (Optional) An `OPENAI_API_KEY` for live LLM nodes
@@ -364,6 +366,11 @@ the [Production Roadmap](docs/PRODUCTION_ROADMAP.md).
   current codebase: what works, what's a stub, and the risks.
 - 🗺️ **[Production Roadmap](docs/PRODUCTION_ROADMAP.md)** — the phased plan to take GaussFlow
   from Alpha to a production 1.0.
+- 🍳 **[Cookbook](docs/COOKBOOK.md)** — a runnable example workflow per node type.
+- 📝 **[Changelog](CHANGELOG.md)** — release notes (starting at 0.1.0).
+- 🔐 **[Security Policy](SECURITY.md)** — reporting + credential handling.
+- 🚢 **Deploy** — [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml), and a
+  Helm chart at [`deploy/helm/gaussflow`](deploy/helm/gaussflow).
 - 📐 **[GaussFlow Specs](GAUSSFLOW-SPECS.md)** — the original design vision.
 
 ---

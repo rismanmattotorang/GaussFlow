@@ -52,6 +52,21 @@ pub struct SynthCommand {
 }
 
 #[derive(Args, Debug)]
+pub struct TokenCommand {
+    /// Subject (principal id) the token is issued to
+    #[arg(long, default_value = "admin")]
+    pub sub: String,
+
+    /// Role to grant (repeatable): viewer | operator | admin
+    #[arg(long = "role")]
+    pub roles: Vec<String>,
+
+    /// Token lifetime in seconds
+    #[arg(long, default_value = "3600")]
+    pub ttl: u64,
+}
+
+#[derive(Args, Debug)]
 pub struct ValidateCommand {
     /// Path to the workflow JSON file
     #[arg(value_name = "WORKFLOW")]
@@ -520,6 +535,22 @@ pub async fn run_workflow(cmd: RunCommand, state: AppState, pb: ProgressBar) -> 
         }
     }
 
+    Ok(())
+}
+
+/// Mint a JWT for the authenticated API. Requires `GAUSSFLOW_JWT_SECRET` (same secret the server
+/// uses). Prints the token to stdout; pass it as `Authorization: Bearer <token>`.
+pub async fn mint_token(cmd: TokenCommand) -> Result<()> {
+    let secret = gaussflow_security::auth::secret_from_env()
+        .map_err(|_| anyhow::anyhow!("set GAUSSFLOW_JWT_SECRET to mint a token"))?;
+    let roles = if cmd.roles.is_empty() {
+        vec!["admin".to_string()]
+    } else {
+        cmd.roles
+    };
+    let token = gaussflow_security::auth::mint(&secret, &cmd.sub, &roles, cmd.ttl)
+        .map_err(|e| anyhow::anyhow!("failed to mint token: {e}"))?;
+    println!("{token}");
     Ok(())
 }
 

@@ -1,0 +1,38 @@
+# Default values for the GaussFlow web server.
+
+replicaCount: 1
+
+image:
+  repository: gaussflow/gaussflow-web
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    cpu: "1"
+    memory: "512Mi"
+
+# Horizontal autoscaling (requires metrics-server).
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+env:
+  RUST_LOG: info
+  GAUSSFLOW_RUN_STORE: memory
+
+# Name of an existing Secret holding sensitive env vars (GAUSSFLOW_JWT_SECRET,
+# OPENAI_API_KEY, ANTHROPIC_API_KEY, GAUSSFLOW_DB_PASS). Never put secrets in values.yaml.
+existingSecret: ""
+
+# Liveness/readiness probe path (the web server exposes /api/health).
+probePath: /api/health

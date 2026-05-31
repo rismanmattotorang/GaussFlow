@@ -1,12 +1,16 @@
 [package]
 name = "gaussflow-synth"
-version = "0.0.1"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
 description = "GaussFlow synthesis layer: compile a natural-language prompt into a validated, runnable workflow DAG."
 
 [dependencies]
-gaussflow-core = { path = "../gaussflow-core" }
-gaussflow-runtime = { path = "../gaussflow-runtime" }
+gaussflow-core = { path = "../gaussflow-core", version = "0.1.0" }
+gaussflow-runtime = { path = "../gaussflow-runtime", version = "0.1.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 async-trait = "0.1"

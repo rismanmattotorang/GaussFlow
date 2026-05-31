@@ -1,9 +1,12 @@
 [package]
 name = "gaussflow-web"
-version = "0.0.1"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
 description = "Modern WebUI for GaussFlow DAG Workflow Engine"
-authors = ["GaussFlow Team"]
 
 [dependencies]
 # Web framework
@@ -43,9 +46,9 @@ anyhow = "1"
 thiserror = "1"
 
 # GaussFlow core
-gaussflow-core = { path = "../gaussflow-core" }
-gaussflow-runtime = { path = "../gaussflow-runtime" }
-gaussflow-security = { path = "../gaussflow-security" }
+gaussflow-core = { path = "../gaussflow-core", version = "0.1.0" }
+gaussflow-runtime = { path = "../gaussflow-runtime", version = "0.1.0" }
+gaussflow-security = { path = "../gaussflow-security", version = "0.1.0" }
 
 # Templating
 askama = { version = "0.12", features = ["with-axum"] }

@@ -63,6 +63,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Mint a JWT for the authenticated API (needs GAUSSFLOW_JWT_SECRET)
+    Token(TokenCommand),
+
     /// Synthesize a workflow from a natural-language prompt (prompt → DAG → deploy → run)
     Synth(SynthCommand),
 
@@ -202,6 +205,8 @@ async fn init_app_state(cli: &Cli) -> Result<AppState> {
 
 async fn execute_command(command: Commands, state: AppState) -> Result<()> {
     match command {
+        Commands::Token(cmd) => mint_token(cmd).await,
+
         Commands::Synth(cmd) => {
             let pb = create_progress_bar("Synthesizing workflow");
             let result = synthesize_workflow(cmd, state, pb.clone()).await;

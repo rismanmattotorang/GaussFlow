@@ -10,3 +10,15 @@ members = [
     "gaussflow-tui"
 ]
 resolver = "2"
+
+# Shared package metadata, inherited by member crates via `<field>.workspace = true`.
+# Versioned for the first public (0.1.0) release.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/rismanmattotorang/gaussflow"
+authors = ["Gaussian Technologies"]
+# Minimum supported Rust: the code uses `Option::is_none_or` (stable in 1.82).
+rust-version = "1.82"
+

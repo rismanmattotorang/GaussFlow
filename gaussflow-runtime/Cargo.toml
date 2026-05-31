@@ -1,7 +1,11 @@
 [package]
 name = "gaussflow-runtime"
-version = "0.0.1"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # Core async runtime
@@ -61,7 +65,7 @@ opentelemetry-otlp = { version = "0.11", features = ["tonic", "tls"], optional =
 prometheus = { version = "0.13", optional = true }
 
 # Core crate
-gaussflow-core = { path = "../gaussflow-core" }
+gaussflow-core = { path = "../gaussflow-core", version = "0.1.0" }
 
 # Cross-platform process info: Linux uses procfs; other platforms need no extra deps.
 # NOTE: target-specific tables MUST come after all [dependencies] entries — any dependency

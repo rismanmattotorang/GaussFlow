@@ -1,7 +1,11 @@
 [package]
 name = "gaussflow-cli"
-version = "0.0.1"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # Core CLI and parsing
@@ -80,6 +84,7 @@ num_cpus = "1.16"
 petgraph = "0.6"
 
 # Internal crates
-gaussflow-core = { path = "../gaussflow-core" }
-gaussflow-runtime = { path = "../gaussflow-runtime" }
-gaussflow-synth = { path = "../gaussflow-synth" }
+gaussflow-core = { path = "../gaussflow-core", version = "0.1.0" }
+gaussflow-runtime = { path = "../gaussflow-runtime", version = "0.1.0" }
+gaussflow-synth = { path = "../gaussflow-synth", version = "0.1.0" }
+gaussflow-security = { path = "../gaussflow-security", version = "0.1.0" }
