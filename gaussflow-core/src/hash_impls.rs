@@ -7,6 +7,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 // Helper function to hash any serializable type
+#[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
 fn hash_value<T: serde::Serialize>(value: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     let bytes = bincode::serialize(value).unwrap_or_default();

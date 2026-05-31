@@ -7,13 +7,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::Duration;
-use surrealdb::engine::remote::ws::Ws;
-use surrealdb::opt::auth::Root;
-use surrealdb::Surreal;
 use tokio::sync::Semaphore;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
+
+pub mod store;
+pub use store::{InMemoryRunStore, RunStore, SurrealRunStore};
 
 static INIT: Once = Once::new();
 
@@ -71,7 +71,7 @@ pub mod sys;
 /// Resolve SurrealDB connection settings from the environment, falling back to local-dev
 /// defaults. No credentials are hardcoded; set `GAUSSFLOW_DB_PASS` for any non-local deployment.
 /// Returns `(url, user, password, namespace, database)`.
-fn surreal_settings() -> (String, String, String, String, String) {
+pub(crate) fn surreal_settings() -> (String, String, String, String, String) {
     let url = std::env::var("GAUSSFLOW_SURREAL_URL")
         .unwrap_or_else(|_| "ws://127.0.0.1:8000/rpc".to_string());
     let user = std::env::var("GAUSSFLOW_DB_USER").unwrap_or_else(|_| "root".to_string());
@@ -87,26 +87,43 @@ fn surreal_settings() -> (String, String, String, String, String) {
     (url, user, pass, ns, db)
 }
 
+/// Execute a workflow DAG.
+///
+/// Selects a [`RunStore`] backend and delegates to [`execute_with_store`]. By default this uses
+/// the dependency-free [`InMemoryRunStore`], so **no database is required**. Set
+/// `GAUSSFLOW_RUN_STORE=surreal` to persist runs to SurrealDB instead.
+///
+/// Returns a JSON object `{ "run_id", "output", "outputs" }` where `outputs` maps each node id
+/// (plus `"input"`) to its result and `output` is the result of the last node in topological order.
 pub async fn execute(
     dag: TypeSafeDag,
     input: Value,
 ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-    info!("Connecting to SurrealDB");
-    // Connect to SurrealDB using environment-sourced credentials.
-    let (surreal_url, db_user, db_pass, ns, db_name) = surreal_settings();
-    let db = Surreal::new::<Ws>(surreal_url.as_str()).await?;
-    db.signin(Root {
-        username: db_user.as_str(),
-        password: db_pass.as_str(),
-    })
-    .await?;
-    db.use_ns(ns.as_str()).use_db(db_name.as_str()).await?;
+    let use_surreal = std::env::var("GAUSSFLOW_RUN_STORE")
+        .map(|v| v.eq_ignore_ascii_case("surreal"))
+        .unwrap_or(false);
 
+    if use_surreal {
+        let store = SurrealRunStore::connect().await?;
+        execute_with_store(dag, input, &store).await
+    } else {
+        let store = InMemoryRunStore::new();
+        execute_with_store(dag, input, &store).await
+    }
+}
+
+/// Execute a workflow DAG against an explicit [`RunStore`].
+///
+/// This is the single canonical execution path: a topological walk that respects dependencies,
+/// merges predecessor outputs as each node's input, applies per-node timeouts and retry/backoff,
+/// and bounds concurrency with CPU/GPU semaphores. Run lifecycle events are written to `store`.
+pub async fn execute_with_store(
+    dag: TypeSafeDag,
+    input: Value,
+    store: &dyn RunStore,
+) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
     let run_id = Uuid::new_v4().to_string();
-    db.query("CREATE run SET id = $id, status = 'running', started = time::now(), input = $input")
-        .bind(("id", run_id.clone()))
-        .bind(("input", input.clone()))
-        .await?;
+    store.start_run(&run_id, &input).await?;
 
     let cpu_sem = Arc::new(Semaphore::new(
         dag.settings.concurrency.unwrap_or(num_cpus::get() as u32) as usize,
@@ -114,8 +131,9 @@ pub async fn execute(
     let gpu_sem = Arc::new(Semaphore::new(1)); // placeholder for single local GPU
 
     let mut topo = Topo::new(&dag.graph);
-    let mut outputs = HashMap::new();
+    let mut outputs: HashMap<String, Value> = HashMap::new();
     outputs.insert("input".to_string(), input);
+    let mut last_node_id: Option<String> = None;
 
     while let Some(nx) = topo.next(&dag.graph) {
         if dag.settings.fail_fast && outputs.values().any(|v| v.get("error").is_some()) {
@@ -123,23 +141,23 @@ pub async fn execute(
         }
         let n = &dag.graph[nx];
 
-        // Basic input assembly: merge outputs of all predecessors
+        // Basic input assembly: merge outputs of all predecessors.
         let predecessors = dag
             .graph
             .neighbors_directed(nx, petgraph::Direction::Incoming);
         let mut merged_input = json!({});
         for p_nx in predecessors {
             if let Some(output) = outputs.get(&dag.graph[p_nx].id) {
-                // For simplicity, we merge outputs; real implementation needs named ports
-                output.as_object().unwrap().iter().for_each(|(k, v)| {
-                    merged_input[k] = v.clone();
-                });
+                if let Some(obj) = output.as_object() {
+                    for (k, v) in obj {
+                        merged_input[k] = v.clone();
+                    }
+                }
             }
         }
 
         let handler = handler::handler_for(&n.node_type);
 
-        // Handle resources with proper Option handling
         let resources = n.resources.as_ref();
         let permit_sem = if resources.is_some_and(|r| r.gpu_count > 0) {
             gpu_sem.clone()
@@ -193,24 +211,43 @@ pub async fn execute(
                         break Err(Box::new(std::io::Error::new(
                             std::io::ErrorKind::TimedOut,
                             format!("DAG Timeout: {}", n_ref.id.clone()),
-                        )));
+                        ))
+                            as Box<dyn std::error::Error + Send + Sync>);
                     }
                 }
             }
         });
 
-        outputs.insert(n.id.clone(), task.await??);
+        // Record failures in the store before propagating.
+        let node_output = match task.await {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => {
+                let _ = store.fail_run(&run_id, &e.to_string()).await;
+                return Err(e);
+            }
+            Err(join_err) => {
+                let _ = store.fail_run(&run_id, &join_err.to_string()).await;
+                return Err(Box::new(join_err));
+            }
+        };
+        outputs.insert(n.id.clone(), node_output);
+        last_node_id = Some(n.id.clone());
     }
 
-    // For now, return the output of the last node processed (usually the sink)
-    let output = outputs.values().last().cloned().unwrap_or_default();
+    // The "final" output is the last node in topological order (deterministic), with the full
+    // per-node output map returned alongside so callers can pick a different sink.
+    let final_output = last_node_id
+        .as_ref()
+        .and_then(|id| outputs.get(id))
+        .cloned()
+        .unwrap_or_default();
 
-    db.query(
-        "UPDATE type::thing('run', $id) SET status='finished', finished=time::now(), output=$out",
-    )
-    .bind(("id", run_id.clone()))
-    .bind(("out", output.clone()))
-    .await?;
+    store.finish_run(&run_id, &final_output).await?;
 
-    Ok(json!({ "run_id": run_id }))
+    let outputs_map: serde_json::Map<String, Value> = outputs.into_iter().collect();
+    Ok(json!({
+        "run_id": run_id,
+        "output": final_output,
+        "outputs": outputs_map,
+    }))
 }

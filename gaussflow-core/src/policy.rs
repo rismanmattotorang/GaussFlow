@@ -136,6 +136,7 @@ pub trait PolicyEnforcer: Send + Sync {
 }
 
 /// Audit trail for policy events
+#[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
 pub struct AuditTrail {
     events: Vec<PolicyEvent>,
     config: AuditConfig,

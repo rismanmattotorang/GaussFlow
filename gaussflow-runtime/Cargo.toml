@@ -94,15 +94,8 @@ features = ["small_rng"]
 [dev-dependencies.rand_distr]
 version = "0.4"
 
-[[bench]]
-name = "runtime_bench"
-harness = false
-path = "benches/runtime_benchmark.rs"
-
-[[bench]]
-name = "comprehensive_bench"
-harness = false
-path = "benches/comprehensive_benchmark.rs"
+# NOTE: the previous benches targeted the removed `runtime::runtime` parallel engine and were
+# deleted in Phase 1. New benches against the canonical `execute` path are a future task.
 
 [features]
 default = []
@@ -112,14 +105,5 @@ otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:tokio-console"]
 # (axum); completing this is a Phase 4 task. The feature is declared so default builds are clean.
 metrics = ["dep:prometheus"]
 http = []
-# Enables quarantined legacy tests that target the dead runtime::runtime engine (Phase 1).
-# Off by default so the standard build/CI is green; these tests do not yet compile.
+# Enables the quarantined legacy planner test (drifted API). Off by default so CI stays green.
 legacy_tests = []
-
-[[test]]
-name = "integration"
-path = "tests/runtime_integration.rs"
-
-[[test]]
-name = "concurrent"
-path = "tests/concurrent_tests.rs"

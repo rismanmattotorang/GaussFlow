@@ -241,6 +241,7 @@ where
     }
 }
 
+#[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
 pub struct ExecutionEngine<N, E> {
     concurrency: usize,
     node_executor: Arc<dyn AsyncNodeExecutor>,

@@ -13,13 +13,11 @@
 
 pub mod checkpoint;
 pub mod dag;
-pub mod engine;
 pub mod error;
 pub mod executor;
 pub mod hash_impls;
 pub mod metrics;
 pub mod model;
-pub mod node;
 pub mod policy;
 pub mod resource;
 pub mod scheduler;
@@ -81,22 +79,18 @@ pub fn prometheus_metrics() -> String {
     "Metrics not available".to_string()
 }
 
-// Re-export commonly used types from submodules
+// Re-export commonly used types from submodules.
+// NOTE: the canonical workflow data model is `crate::model` (`NodeSpec`/`NodeType`/...). The
+// former duplicate model in `node.rs` and the buggy duplicate engine in `engine.rs` were removed
+// in Phase 1 (consolidation). The single canonical executor now lives in `gaussflow-runtime`.
 pub use crate::checkpoint::{CheckpointManager, CheckpointStore, FileCheckpointStore};
 pub use crate::dag::{DagEdge, DagNode, DagValidationError};
-pub use crate::engine::{
-    ExecutionEngine, ExecutionError as EngineError, TaskQueue, TaskQueueReceiver,
-};
 pub use crate::error::{
     ExecutionError as ErrorExecutionError, GaussFlowError, PolicyError, ResourceError,
 };
 pub use crate::executor::{Middleware, NodeExecutor as ExecutorNodeExecutor, PolicyHook};
 pub use crate::metrics::Metrics;
 pub use crate::model::{EdgeSpec, NodeSpec, NodeType, WorkflowSettings, WorkflowSpec};
-pub use crate::node::{
-    AuditPolicy, MonitoringPolicy, NodeSpec as NodeNodeSpec, NodeType as NodeNodeType,
-    SecurityPolicy,
-};
 pub use crate::policy::Policy;
 pub use crate::resource::{ResourceManager, ResourceSpec, ResourceUsage};
 pub use crate::scheduler::{PriorityScheduler, Scheduler, SchedulerConfig};

@@ -81,6 +81,7 @@ pub trait Scheduler: Send + Sync + 'static {
     ) -> Result<u8, SchedulerError>;
 }
 
+#[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
 pub struct PriorityScheduler<N, E> {
     config: SchedulerConfig,
     resource_manager: Arc<crate::resource::ResourceManager>,
@@ -136,6 +137,7 @@ impl<N, E> PriorityScheduler<N, E> {
         priority.clamp(1, 100)
     }
 
+    #[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
     fn calculate_resource_score(&self, spec: &ResourceSpec) -> u32 {
         // Simple weighted sum of resources
         // Higher score means more resource-intensive

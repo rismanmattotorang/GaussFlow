@@ -160,6 +160,7 @@ impl Planner {
     }
 
     /// Get the best available remote executor for a node
+    #[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
     fn get_best_executor(&self, spec: &ResourceSpec) -> Option<(String, RemoteExecutorConfig)> {
         // If a specific executor is required, return it
         if let Some(executor_id) = &spec.required_executor {

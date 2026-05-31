@@ -79,28 +79,38 @@ history of the old secrets.
 
 ---
 
-## Phase 1 — Consolidate the core (Weeks 2–4) 🧱 foundation
+## Phase 1 — Consolidate the core (Weeks 2–4) 🧱 foundation ✅ core objectives done
 
 *Objective: one data model, one execution engine, one correct path.*
 
-- [ ] **Choose a canonical data model.** Keep `gaussflow-core/src/model.rs`; remove or merge the
-      competing types in `gaussflow-core/src/node.rs`. Document the schema.
-- [ ] **Choose a canonical engine.** Promote `gaussflow-runtime/src/lib.rs::execute` as the one
-      true executor. **Delete or quarantine** the `runtime/runtime/` parallel engine (with the
-      `todo!()`), or formally mark it `experimental` behind a feature flag with no public re-export.
-- [ ] **Remove the broken core engine paths.** Either fix or remove
-      `core::engine::execute` / `execute_workflow` (dependency-ordering and node-id/index bugs).
-      Do not ship two more execution implementations.
-- [ ] **Decouple execution from SurrealDB.** Introduce a `RunStore` trait with an in-memory
-      default so workflows can run with zero external dependencies; SurrealDB becomes one
-      pluggable backend.
-- [ ] **Return real outputs.** `execute` should return node outputs, not just a `run_id`.
-- [ ] **Implement `TypeSafeDag` deserialization** (`dag.rs:254`) or remove the API.
-- [ ] **Property-test the scheduler:** generate random DAGs, assert topological correctness and
-      that no node runs before its dependencies.
+- [x] **Choose a canonical data model.** ✅ `gaussflow-core/src/model.rs` is canonical; the
+      competing duplicate types in `node.rs` (`NodeNodeSpec`/`NodeNodeType`/policy structs, used by
+      nothing) were removed along with their re-exports.
+- [x] **Choose a canonical engine.** ✅ `gaussflow_runtime::execute_with_store` is the one true
+      executor. The dead `runtime/runtime/` parallel engine (the `todo!()` work-stealing scheduler,
+      never declared as a module) was **deleted** along with its tests and benches — recoverable
+      from git history if Phase 6 wants to salvage the work-stealing scheduler.
+- [x] **Remove the broken core engine paths.** ✅ Deleted `core::engine` (the duplicate
+      `execute`/`execute_workflow` with the dependency-ordering and node-id/index bugs) and the
+      dead `node_executor.rs`. There is now a single execution implementation.
+- [x] **Decouple execution from SurrealDB.** ✅ New `RunStore` trait (`gaussflow-runtime/src/store.rs`)
+      with a dependency-free `InMemoryRunStore` **default** — workflows run with zero external
+      services. `SurrealRunStore` is one pluggable backend, opt-in via `GAUSSFLOW_RUN_STORE=surreal`.
+- [x] **Return real outputs.** ✅ `execute` now returns `{ run_id, output, outputs }` with the full
+      per-node output map, not just a `run_id`.
+- [x] **Implement `TypeSafeDag` deserialization or remove the API.** ✅ Removed the misleading
+      `serialize`/`deserialize`/`partition` stubs (one panicked via `unimplemented!()`, one silently
+      returned `""`); `TypeSafeDag::from_json` is the canonical entry point.
+- [x] **Fix the CLI so it actually runs.** ✅ Fixed a `clap` `-c` short-option collision (global
+      `--config` vs `--cache`) and invalid `null` values in `config/default.toml` that panicked the
+      binary on every invocation. `validate` and `run` now work.
+- [ ] **Property-test the scheduler** (generate random DAGs; assert topological correctness).
+      *Partially covered by the new `no_db_execution` integration test (multi-node ordering +
+      no-DB execution); a full `proptest` sweep remains.*
 
-**Exit criteria:** one model, one engine; `cargo run -p gaussflow-cli -- run workflow.json`
-executes a multi-node DAG correctly with no database required.
+**Exit criteria:** ✅ one model, one engine; `cargo run -p gaussflow-cli -- run workflow.json`
+executes a multi-node DAG correctly **with no database required** (verified end-to-end, and by the
+`no_db_execution` integration test). **Remaining:** the property-test sweep.
 
 ---
 

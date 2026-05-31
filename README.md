@@ -103,12 +103,13 @@ capability stands today, evaluated against the product vision above.
 | **Prompt → DAG synthesis (the compiler)** | 🔴 **Planned — flagship** | The defining feature. No NL→graph code exists yet; design in [SYNTHESIS_PIPELINE.md](docs/SYNTHESIS_PIPELINE.md) |
 | **Confirm → Deploy → Run lifecycle** | 🔴 **Planned** | No confirmation/registration/deploy step exists yet |
 | Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core` compiles and validates (cycle/type checks) — the synthesis *target* |
-| Topological single-machine execution | 🟡 **Builds; not yet consolidated** | `gaussflow-runtime` (Tokio-based) compiles and is the intended back-end; coupled to SurrealDB and returns a `run_id` — Phase 1 will consolidate and decouple it |
-| LLM node (OpenAI Chat Completions) | 🟡 **Builds** | Real OpenAI call in `handler.rs`; reads `OPENAI_API_KEY` from env |
-| Resource control (CPU/GPU semaphores) | 🟡 **Partial** | Implemented in `gaussflow-core`; runtime wiring to be finished in Phase 1 |
-| Retry with backoff (fixed/linear/exp) | 🟡 **Partial** | Policy modeled; runtime wiring to be finished in Phase 1 |
-| Run persistence (SurrealDB) | 🟡 **Partial** | Hardcoded creds; needs config + graceful fallback |
-| CLI (validate / run / serve / config) | 🟡 **Partial** | Command scaffold present, wiring incomplete |
+| Topological single-machine execution | ✅ **Working** | One canonical engine (`gaussflow_runtime::execute_with_store`); runs with **no database** and returns real per-node outputs |
+| Run with **no external dependencies** | ✅ **Working** | `RunStore` trait + in-memory default; SurrealDB is opt-in via `GAUSSFLOW_RUN_STORE=surreal` |
+| LLM node (OpenAI Chat Completions) | ✅ **Working** | Real OpenAI call in `handler.rs`; reads `OPENAI_API_KEY` from env |
+| Resource control (CPU/GPU semaphores) | ✅ **Working** | Concurrency limits + per-node timeouts in the executor |
+| Retry with backoff (fixed/linear/exp) | ✅ **Working** | Per-node retry policy applied by the executor |
+| Run persistence (SurrealDB) | 🟡 **Partial** | Env-sourced creds; opt-in backend behind the `RunStore` trait |
+| CLI (validate / run / serve / config) | 🟡 **Partial** | `validate` + DB-free `run` work; `serve`/`config` wiring incomplete |
 | Web dashboard + REST/WebSocket API | 🟡 **Partial** | API surface exists; execution path is *simulated* |
 | Python bindings (PyO3) | 🟡 **Partial** | `validate` + async `execute` exposed |
 | Terminal UI (TUI) | 🟡 **Partial** | Monitoring UI scaffold |
@@ -120,11 +121,11 @@ capability stands today, evaluated against the product vision above.
 
 Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 
-> **The honest summary:** the workspace now **builds and tests green**, with secrets removed and
-> CI gating build + test (Phase 0 ✅). What remains is the substance: consolidating the runtime to
-> one correct engine (Phase 1), making the node types real (Phase 2), and then building the
-> *front door* — the prompt-to-DAG compiler — on top of a runtime we trust. The roadmap is
-> sequenced exactly that way.
+> **The honest summary:** Phase 0 ✅ (builds + tests green, secrets removed, CI-gated) and Phase 1 ✅
+> (one data model, one execution engine, runs with **no database** and returns real outputs) are
+> done. What remains is making the node types real (Phase 2 — agent/router/ensemble are still
+> passthrough stubs) and then building the *front door* — the prompt-to-DAG compiler — on top of a
+> runtime we now trust. The roadmap is sequenced exactly that way.
 
 ---
 
@@ -217,9 +218,8 @@ cargo test  --workspace   # ✅ green
 # Validate a workflow specification
 cargo run -p gaussflow-cli -- validate workflow.json
 
-# Execute it (requires OPENAI_API_KEY for live LLM nodes,
-# and a SurrealDB instance for run persistence)
-export OPENAI_API_KEY=sk-...
+# Execute it — runs with NO database by default and prints per-node outputs.
+# (Set OPENAI_API_KEY for live llm_call nodes; set GAUSSFLOW_RUN_STORE=surreal to persist runs.)
 cargo run -p gaussflow-cli -- run workflow.json
 ```
 
@@ -242,11 +242,11 @@ async def main():
 asyncio.run(main())
 ```
 
-> **Known limitations (tracked on the roadmap):** the runtime persists runs to SurrealDB
-> (credentials are now environment-sourced — see `.env.example`) and returns a `run_id` rather
-> than full node outputs; and there is no prompt-to-DAG step yet — you supply the `WorkflowSpec`
-> the compiler will one day generate. Decoupling persistence and returning real outputs are
-> Phase 1 items.
+> **Known limitations (tracked on the roadmap):** execution runs with no database by default and
+> returns the full per-node output map (`{ run_id, output, outputs }`); SurrealDB persistence is
+> opt-in via `GAUSSFLOW_RUN_STORE=surreal`. The main gaps now are that most node types
+> (agent/router/ensemble/…) are still passthrough stubs (Phase 2), and there is no prompt-to-DAG
+> step yet — you supply the `WorkflowSpec` the compiler will one day generate.
 
 ---
 

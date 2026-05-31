@@ -58,7 +58,12 @@ jobs:
       - name: rustfmt (gating)
         run: cargo fmt --all --check
 
-      - name: clippy (informational)
+      - name: clippy core + runtime (gating)
+        # The product's heart is lint-clean and held to it. The interface crates (cli/web/tui)
+        # still carry scaffolding dead_code and are checked informationally below until Phase 2.
+        run: cargo clippy -p gaussflow-core -p gaussflow-runtime --all-targets -- -D warnings
+
+      - name: clippy full workspace (informational)
         run: cargo clippy --workspace --all-targets
         continue-on-error: true
 

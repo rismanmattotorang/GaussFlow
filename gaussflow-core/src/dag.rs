@@ -120,6 +120,7 @@ impl std::error::Error for DagValidationError {
 
 #[derive(Debug, Clone)]
 /// A directed acyclic graph (DAG) for workflow execution
+#[allow(dead_code)] // scaffolding retained for a later phase (scheduler/executor/policy/planner wiring)
 pub struct DAG<N = NodeSpec, E = EdgeMetadata> {
     /// The underlying graph data structure
     graph: DiGraph<Arc<N>, E>,
@@ -234,22 +235,9 @@ where
         self.clone()
     }
 
-    /// Partitions the DAG into sub-DAGs
-    pub fn partition(&self) -> Vec<Self> {
-        // Implementation
-        vec![self.clone()]
-    }
-
-    /// Serializes the DAG to a string
-    pub fn serialize(&self) -> String {
-        // Implementation
-        String::new()
-    }
-
-    /// Deserializes a DAG from a string
-    pub fn deserialize(&self, _data: &str) -> Result<Self, DagValidationError> {
-        unimplemented!("Deserialization not yet implemented")
-    }
+    // NOTE: the canonical (de)serialization entry point is `TypeSafeDag::from_json`. The former
+    // `serialize`/`deserialize`/`partition` stubs (one panicked via `unimplemented!()`, another
+    // silently returned an empty string) were removed in Phase 1 to avoid a misleading API.
 
     /// Returns an iterator over all nodes in the DAG
     pub fn nodes(&self) -> impl Iterator<Item = &N> {

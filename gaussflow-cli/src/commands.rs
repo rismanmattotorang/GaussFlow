@@ -46,7 +46,8 @@ pub struct RunCommand {
     pub max_concurrent: usize,
 
     /// Enable caching
-    #[arg(short, long)]
+    // `long`-only: the global `--config` already owns the short `-c`.
+    #[arg(long)]
     pub cache: bool,
 
     /// Output format (json, yaml, text)
