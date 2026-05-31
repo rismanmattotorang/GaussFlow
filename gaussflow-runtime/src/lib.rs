@@ -112,7 +112,12 @@ pub async fn execute(
     }
 }
 
-/// Execute a workflow DAG against an explicit [`RunStore`].
+/// Resolves a node type to the handler that executes it. The default is [`handler::handler_for`];
+/// tests and embedders can supply a custom resolver (e.g. recording or mock handlers).
+pub type HandlerResolver =
+    dyn Fn(&gaussflow_core::model::NodeType) -> Box<dyn handler::NodeHandler> + Send + Sync;
+
+/// Execute a workflow DAG against an explicit [`RunStore`], using the default node handlers.
 ///
 /// This is the single canonical execution path: a topological walk that respects dependencies,
 /// merges predecessor outputs as each node's input, applies per-node timeouts and retry/backoff,
@@ -121,6 +126,20 @@ pub async fn execute_with_store(
     dag: TypeSafeDag,
     input: Value,
     store: &dyn RunStore,
+) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    execute_with(dag, input, store, &|kind| handler::handler_for(kind)).await
+}
+
+/// Execute a workflow DAG against an explicit [`RunStore`] and an explicit [`HandlerResolver`].
+///
+/// Same topological, dependency-respecting walk as [`execute_with_store`], but the handler used
+/// for each node is produced by `resolve`. This is the seam used for testing scheduler behavior
+/// with recording handlers, and for embedding custom node implementations.
+pub async fn execute_with(
+    dag: TypeSafeDag,
+    input: Value,
+    store: &dyn RunStore,
+    resolve: &HandlerResolver,
 ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
     let run_id = Uuid::new_v4().to_string();
     store.start_run(&run_id, &input).await?;
@@ -156,7 +175,7 @@ pub async fn execute_with_store(
             }
         }
 
-        let handler = handler::handler_for(&n.node_type);
+        let handler = resolve(&n.node_type);
 
         let resources = n.resources.as_ref();
         let permit_sem = if resources.is_some_and(|r| r.gpu_count > 0) {

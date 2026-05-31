@@ -104,13 +104,15 @@ history of the old secrets.
 - [x] **Fix the CLI so it actually runs.** ✅ Fixed a `clap` `-c` short-option collision (global
       `--config` vs `--cache`) and invalid `null` values in `config/default.toml` that panicked the
       binary on every invocation. `validate` and `run` now work.
-- [ ] **Property-test the scheduler** (generate random DAGs; assert topological correctness).
-      *Partially covered by the new `no_db_execution` integration test (multi-node ordering +
-      no-DB execution); a full `proptest` sweep remains.*
+- [x] **Property-test the scheduler.** ✅ `tests/scheduler_proptest.rs` generates random acyclic
+      DAGs (up to 8 nodes, 200 cases) and, via a recording handler injected through the new
+      `execute_with` seam, asserts that every node runs exactly once and **no node runs before any
+      of its dependencies**.
 
 **Exit criteria:** ✅ one model, one engine; `cargo run -p gaussflow-cli -- run workflow.json`
-executes a multi-node DAG correctly **with no database required** (verified end-to-end, and by the
-`no_db_execution` integration test). **Remaining:** the property-test sweep.
+executes a multi-node DAG correctly **with no database required** (verified end-to-end, by the
+`no_db_execution` integration test, and by the `scheduler_proptest` property test). **Phase 1
+complete.**
 
 ---
 
