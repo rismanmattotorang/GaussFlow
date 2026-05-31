@@ -232,19 +232,29 @@ vault/cloud secret-manager backend, and a richer interactive edit UI.
 
 ---
 
-## Phase 3 — State, persistence & reliability (Weeks 10–13) 💾 durability
+## Phase 3 — State, persistence & reliability (Weeks 10–13) 💾 durability — in progress
 
 *Objective: workflows survive failures and can resume.*
 
+- [x] **Checkpointing.** ✅ `gaussflow-runtime/src/checkpoint.rs`: a `CheckpointStore` trait
+      (`Noop`/`InMemory`/`File`, atomic write-then-rename) persisting the canonical
+      `gaussflow_core::model::Checkpoint` (`node_results` + `WorkflowStatus`) keyed by run id. The
+      executor writes a checkpoint after every node.
+- [x] **Resume from a checkpoint, end-to-end.** ✅ `execute_resumable[_with]` resumes a run from
+      its checkpoint, replaying only the not-yet-completed nodes; an already-`Completed` run
+      returns its recorded result.
+- [x] **Idempotency & exactly-once on resume.** ✅ Nodes already recorded in the checkpoint are not
+      re-executed on resume (a failed node is *not* checkpointed, so it — and only it — is retried).
+- [x] **Failure-injection tests.** ✅ `tests/resume.rs` crashes a run mid-way (node `b` fails),
+      resumes, and asserts the completed node ran exactly once, the failed node was retried, and
+      the run reached the correct final state; plus completed-run no-op and file-checkpoint
+      durability across a fresh store.
 - [ ] **Real content-addressable artifact store** backed by a durable backend (replace the
       `SurrealStore`/`SkyCache` dummies).
-- [ ] **Checkpointing** that actually persists `node_results` and `WorkflowStatus`, with
-      `resume` from a checkpoint working end-to-end.
-- [ ] **Idempotency & exactly-once semantics** for node execution on retry/resume.
 - [ ] **Backpressure & flow control** on the typed data channels.
-- [ ] **Failure injection tests** (kill mid-run, resume, assert correctness).
 
-**Exit criteria:** a long workflow can be interrupted and resumed to the correct final state.
+**Exit criteria:** ✅ **met** — an interrupted run can be resumed to the correct final state
+(`tests/resume.rs`). **Remaining:** durable artifact store and backpressure.
 
 ---
 

@@ -12,8 +12,12 @@ use tracing::{error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
+pub mod checkpoint;
 pub mod provider;
 pub mod store;
+pub use checkpoint::{
+    CheckpointStore, FileCheckpointStore, InMemoryCheckpointStore, NoopCheckpointStore,
+};
 pub use store::{InMemoryRunStore, RunStore, SurrealRunStore};
 
 static INIT: Once = Once::new();
@@ -142,8 +146,106 @@ pub async fn execute_with(
     store: &dyn RunStore,
     resolve: &HandlerResolver,
 ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-    let run_id = Uuid::new_v4().to_string();
-    store.start_run(&run_id, &input).await?;
+    execute_core(
+        dag,
+        input,
+        store,
+        resolve,
+        &checkpoint::NoopCheckpointStore,
+        None,
+    )
+    .await
+}
+
+/// Execute — or **resume** — a workflow with checkpointing.
+///
+/// After each node the engine writes a checkpoint (per-node results + status) to `checkpoints`.
+/// If `resume_run_id` names a run with a saved checkpoint, execution resumes from it:
+/// already-completed nodes are **not** re-run (idempotent / exactly-once), only the rest execute,
+/// and an already-`Completed` run returns its recorded result. This lets a run survive an
+/// interruption and be driven to the correct final state.
+pub async fn execute_resumable(
+    dag: TypeSafeDag,
+    input: Value,
+    store: &dyn RunStore,
+    checkpoints: &dyn checkpoint::CheckpointStore,
+    resume_run_id: Option<String>,
+) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    execute_core(
+        dag,
+        input,
+        store,
+        &|kind| handler::handler_for(kind),
+        checkpoints,
+        resume_run_id,
+    )
+    .await
+}
+
+/// Like [`execute_resumable`] but with an explicit [`HandlerResolver`] (for custom/test handlers).
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_resumable_with(
+    dag: TypeSafeDag,
+    input: Value,
+    store: &dyn RunStore,
+    resolve: &HandlerResolver,
+    checkpoints: &dyn checkpoint::CheckpointStore,
+    resume_run_id: Option<String>,
+) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    execute_core(dag, input, store, resolve, checkpoints, resume_run_id).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_core(
+    dag: TypeSafeDag,
+    input: Value,
+    store: &dyn RunStore,
+    resolve: &HandlerResolver,
+    checkpoints: &dyn checkpoint::CheckpointStore,
+    resume_run_id: Option<String>,
+) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    use gaussflow_core::model::WorkflowStatus;
+
+    let mut outputs: HashMap<String, Value> = HashMap::new();
+    // Node ids that were activated (ran). Used for conditional edge traversal: a node only
+    // activates downstream edges if it itself ran.
+    let mut active_set: HashSet<String> = HashSet::new();
+    let mut last_node_id: Option<String> = None;
+    let run_id: String;
+    let mut resuming = false;
+
+    if let Some(id) = resume_run_id {
+        if let Some(cp) = checkpoints.load(&id).await? {
+            // Resume: seed state from the checkpoint.
+            resuming = true;
+            outputs = cp.node_results;
+            // Reconstruct the active set: any real node whose recorded output is not a skip marker.
+            for (nid, out) in &outputs {
+                if nid != "input" && out.get("skipped").and_then(|s| s.as_bool()) != Some(true) {
+                    active_set.insert(nid.clone());
+                }
+            }
+            last_node_id = cp.last_executed_node.clone();
+            // An already-completed run is idempotent: return its recorded result.
+            if matches!(cp.status, WorkflowStatus::Completed) {
+                let final_output = last_node_id
+                    .as_ref()
+                    .and_then(|i| outputs.get(i))
+                    .cloned()
+                    .unwrap_or_default();
+                let outputs_map: serde_json::Map<String, Value> = outputs.into_iter().collect();
+                return Ok(json!({ "run_id": id, "output": final_output, "outputs": outputs_map }));
+            }
+        }
+        run_id = id;
+    } else {
+        run_id = Uuid::new_v4().to_string();
+    }
+
+    if !resuming {
+        store.start_run(&run_id, &input).await?;
+        outputs.insert("input".to_string(), input);
+    }
 
     let cpu_sem = Arc::new(Semaphore::new(
         dag.settings.concurrency.unwrap_or(num_cpus::get() as u32) as usize,
@@ -151,12 +253,6 @@ pub async fn execute_with(
     let gpu_sem = Arc::new(Semaphore::new(1)); // placeholder for single local GPU
 
     let mut topo = Topo::new(&dag.graph);
-    let mut outputs: HashMap<String, Value> = HashMap::new();
-    outputs.insert("input".to_string(), input);
-    let mut last_node_id: Option<String> = None;
-    // Node ids that were activated (ran). Used for conditional edge traversal: a node only
-    // activates downstream edges if it itself ran.
-    let mut active_set: HashSet<String> = HashSet::new();
 
     while let Some(nx) = topo.next(&dag.graph) {
         if dag.settings.fail_fast && outputs.values().any(|v| v.get("error").is_some()) {
@@ -164,6 +260,15 @@ pub async fn execute_with(
         }
         let n = &dag.graph[nx];
         let node_id = n.id.clone();
+
+        // Idempotency / exactly-once: a node already recorded in a prior (resumed) run is not
+        // re-executed. Keep `last_node_id` tracking active nodes for a deterministic final output.
+        if outputs.contains_key(&node_id) {
+            if active_set.contains(&node_id) {
+                last_node_id = Some(node_id);
+            }
+            continue;
+        }
 
         // Activation + input assembly with conditional edge traversal.
         // A source node (no incoming edges) is always active and receives the run input.
@@ -209,10 +314,19 @@ pub async fn execute_with(
         };
 
         if !is_active {
-            outputs.insert(node_id, json!({ "skipped": true }));
+            outputs.insert(node_id.clone(), json!({ "skipped": true }));
+            save_checkpoint(
+                checkpoints,
+                &run_id,
+                &outputs,
+                Some(node_id),
+                WorkflowStatus::Running,
+                None,
+            )
+            .await?;
             continue;
         }
-        active_set.insert(node_id);
+        active_set.insert(node_id.clone());
 
         let handler = resolve(&n.node_type);
 
@@ -276,20 +390,48 @@ pub async fn execute_with(
             }
         });
 
-        // Record failures in the store before propagating.
+        // Record failures (run store + a Failed checkpoint) before propagating. The failed node is
+        // NOT added to `outputs`, so a resume retries exactly that node.
         let node_output = match task.await {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => {
                 let _ = store.fail_run(&run_id, &e.to_string()).await;
+                let _ = save_checkpoint(
+                    checkpoints,
+                    &run_id,
+                    &outputs,
+                    last_node_id.clone(),
+                    WorkflowStatus::Failed,
+                    Some(e.to_string()),
+                )
+                .await;
                 return Err(e);
             }
             Err(join_err) => {
                 let _ = store.fail_run(&run_id, &join_err.to_string()).await;
+                let _ = save_checkpoint(
+                    checkpoints,
+                    &run_id,
+                    &outputs,
+                    last_node_id.clone(),
+                    WorkflowStatus::Failed,
+                    Some(join_err.to_string()),
+                )
+                .await;
                 return Err(Box::new(join_err));
             }
         };
-        outputs.insert(n.id.clone(), node_output);
-        last_node_id = Some(n.id.clone());
+        outputs.insert(node_id.clone(), node_output);
+        last_node_id = Some(node_id);
+        save_checkpoint(
+            checkpoints,
+            &run_id,
+            &outputs,
+            last_node_id.clone(),
+            WorkflowStatus::Running,
+            None,
+        )
+        .await?;
     }
 
     // The "final" output is the last node in topological order (deterministic), with the full
@@ -301,6 +443,15 @@ pub async fn execute_with(
         .unwrap_or_default();
 
     store.finish_run(&run_id, &final_output).await?;
+    save_checkpoint(
+        checkpoints,
+        &run_id,
+        &outputs,
+        last_node_id.clone(),
+        gaussflow_core::model::WorkflowStatus::Completed,
+        None,
+    )
+    .await?;
 
     let outputs_map: serde_json::Map<String, Value> = outputs.into_iter().collect();
     Ok(json!({
@@ -308,6 +459,30 @@ pub async fn execute_with(
         "output": final_output,
         "outputs": outputs_map,
     }))
+}
+
+/// Persist the current execution state as a checkpoint for `run_id`.
+async fn save_checkpoint(
+    checkpoints: &dyn checkpoint::CheckpointStore,
+    run_id: &str,
+    outputs: &HashMap<String, Value>,
+    last_executed_node: Option<String>,
+    status: gaussflow_core::model::WorkflowStatus,
+    error: Option<String>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let cp = gaussflow_core::model::Checkpoint {
+        id: run_id.to_string(),
+        timestamp,
+        status,
+        last_executed_node,
+        node_results: outputs.clone(),
+        error,
+    };
+    checkpoints.save(run_id, &cp).await
 }
 
 /// Decide whether a graph edge is "taken", given its `on` label and the source node's output.

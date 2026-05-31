@@ -110,6 +110,7 @@ capability stands today, evaluated against the product vision above.
 | Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core` compiles and validates (cycle/type checks) — the synthesis *target* |
 | Topological single-machine execution | ✅ **Working** | One canonical engine (`gaussflow_runtime::execute_with_store`); runs with **no database** and returns real per-node outputs |
 | Run with **no external dependencies** | ✅ **Working** | `RunStore` trait + in-memory default; SurrealDB is opt-in via `GAUSSFLOW_RUN_STORE=surreal` |
+| Checkpoint + resume (crash recovery) | ✅ **Working** | `CheckpointStore` (in-memory/file); `execute_resumable` resumes an interrupted run, re-running only incomplete nodes (idempotent); failure-injection tested |
 | LLM node + provider abstraction | ✅ **Working** | `LlmProvider` trait; **OpenAI + Anthropic + local Ollama** providers + deterministic offline `MockProvider`, selected by model name (`gpt*`/`claude*`/`ollama/*`/`mock*`) or `GAUSSFLOW_LLM_PROVIDER` |
 | Data-processor / conditional nodes | ✅ **Working** | Real deterministic transforms (`extract`/`set`) and comparisons (`eq`/`gt`/…); tested offline |
 | Conditional/router branching | ✅ **Working** | Engine traverses edges by `on` label and skips untaken branches; `router` selects by input field; `subgraph` runs a nested workflow |
@@ -125,7 +126,7 @@ capability stands today, evaluated against the product vision above.
 | Terminal UI (TUI) | 🟡 **Partial** | Monitoring UI scaffold |
 | Anthropic / Ollama providers, streaming | 🔴 **Planned** | `LlmProvider` abstraction is in place (OpenAI + mock); more backends + token streaming are enhancements |
 | Content-addressable artifact store | 🔴 **Planned** | In-memory store works; SurrealDB store is a stub |
-| Distributed checkpointing & time-travel | 🔴 **Planned** | Types defined; backend not implemented |
+| Distributed checkpointing & time-travel | 🟡 **Partial** | Single-machine checkpoint/resume works (above); distributed/time-travel planned |
 | RBAC, audit, SLA, compliance | 🔴 **Planned** | Config types defined; enforcement not implemented |
 | Distributed / K8s / edge execution | 🔴 **Planned** | Feature flags exist; runtime not implemented |
 
@@ -138,9 +139,10 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 > ensemble fan-in). The **flagship synthesis layer** (`gaussflow-synth`, **Phase S ✅**) compiles a
 > prompt into a validated, runnable graph end-to-end — confirm/edit/estimate, multi-provider
 > planning (OpenAI/Anthropic/Ollama), and versioned/immutable deploy with provenance,
-> required-secrets, quotas, triggers, and run trace-back. What's left is the Phase 3+ platform work
-> (persistence, observability, security/multi-tenancy, scale-out), plus a trigger-firing scheduler
-> and a vault secret backend. The roadmap is sequenced exactly that way.
+> required-secrets, quotas, triggers, and run trace-back. **Phase 3 is underway** — checkpoint +
+> resume (crash recovery, idempotent) works and is failure-injection tested; remaining there are a
+> durable content-addressable artifact store and backpressure. Beyond that: observability,
+> security/multi-tenancy, and scale-out. The roadmap is sequenced exactly that way.
 
 ---
 
