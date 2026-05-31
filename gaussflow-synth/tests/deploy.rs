@@ -49,6 +49,8 @@ async fn deployments_are_immutable() {
         spec_json: r#"{"a":1}"#.into(),
         spec_hash: "hash-a".into(),
         created_at_unix: 0,
+        required_secrets: vec![],
+        triggers: vec![],
     };
     let b = Deployment {
         spec_json: r#"{"a":2}"#.into(),

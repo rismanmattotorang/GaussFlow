@@ -153,9 +153,9 @@ real implementations**; the remaining items (extra providers, streaming) are enh
       built-in tools `echo`/`upper`/`sum`. Covered by the `agent_parallel` tests.
 - [x] **Parallel node.** ✅ `ParallelHandler` runs an array of inline `branches` concurrently (each
       on its own in-memory engine) and collects their outputs in order.
-- [x] **More providers.** ✅ Anthropic (Messages API) added behind `LlmProvider`, alongside OpenAI
-      and the offline mock; selected by model name or `GAUSSFLOW_LLM_PROVIDER`. *(Local/Ollama still
-      to come.)*
+- [x] **More providers.** ✅ Anthropic (Messages API) and a local **Ollama** provider added behind
+      `LlmProvider`, alongside OpenAI and the offline mock; selected by model name (`gpt*`/`claude*`/
+      `ollama/*`/`mock*`) or `GAUSSFLOW_LLM_PROVIDER`.
 - [ ] **Streaming.** Token streaming for LLM nodes surfaced over the API/WebSocket. *(enhancement)*
 
 **Exit criteria:** ✅ **met** — every `NodeType` variant has a real implementation: `llm_call`,
@@ -164,7 +164,7 @@ remaining provider/streaming items are enhancements, not blockers.
 
 ---
 
-## Phase S — The synthesis layer: prompt → DAG → confirm → deploy → run 🧠 the product — first version shipped
+## Phase S — The synthesis layer: prompt → DAG → confirm → deploy → run 🧠 the product ✅ complete
 
 *Objective: deliver GaussFlow's defining capability — turn a natural-language prompt into a
 validated, runnable agent graph that the user confirms before it ships. Full design in
@@ -203,25 +203,32 @@ This is the highest-value phase. Everything before it existed to make this phase
       first-pass validation rate, avg repair iterations, and run-success rate with regression-gate
       asserts (currently 100% validated, 100% run, 86% first-pass). *Measuring real planning
       quality needs a live provider; the corpus uses canned plans as stand-ins.*
-- [x] **Deploy hardening (first cut).** ✅ `deploy.rs`: confirmed results become **versioned,
-      immutable** `Deployment` records (SHA-256 content hash; per-name version; rejects overwriting
-      with different content) carrying the **originating prompt (provenance)**. `run_deployment`
+- [x] **Deploy hardening.** ✅ `deploy.rs`: confirmed results become **versioned, immutable**
+      `Deployment` records (SHA-256 content hash; per-name version; rejects overwriting with
+      different content) carrying the **originating prompt (provenance)**. `run_deployment`
       executes on the canonical runtime and links each run back to its deployment (**trace-back**).
-      `DeploymentStore` has in-memory and file-backed (`FileDeploymentStore`) implementations; CLI:
-      `gaussflow synth … --deploy [--deploy-dir]`. *Remaining: secrets-manager resolution, resource
-      quotas, and trigger/schedule registration.*
+      `DeploymentStore` has in-memory and file-backed (`FileDeploymentStore`) implementations.
+      Deployments now also: record their **required secrets** (inferred from node models, recursing
+      into subgraph/parallel) and validate them via a `SecretProvider` (`check_secrets`); enforce a
+      resource **`Quota`** (max nodes / model invocations / external-calls ban) at deploy time; and
+      register **`Trigger`s** (manual / schedule / webhook). CLI: `gaussflow synth … --deploy
+      [--deploy-dir] [--schedule CRON] [--max-model-calls N]`. *Remaining: an executor that fires
+      scheduled triggers, and a concrete vault/cloud secret-manager backend.*
 - [x] **Production planning provider.** ✅ Planning runs on the real `LlmProvider`s — OpenAI and
       **Anthropic** (selected by model name: `gpt*`/`claude*`, or `GAUSSFLOW_LLM_PROVIDER`).
-      `gaussflow synth "<prompt>" --model claude-3-5-sonnet` plans for real. *(Local/Ollama still
-      to come.)*
+      `gaussflow synth "<prompt>" --model claude-3-5-sonnet` plans for real. A local **Ollama**
+      provider is also available (`ollama/<model>`, via `OLLAMA_HOST`).
 - [x] **Real planning provider.** ✅ Planning runs on OpenAI or Anthropic (by model name);
       offline tests use a scripted stub provider.
 
-**Exit criteria (first version ✅):** a prompt produces a `WorkflowSpec` that passes the same
-validator a hand-authored graph does, uses only runtime-supported node types (with bounded
-repair), is rendered for confirmation, and — once confirmed — runs end-to-end with real outputs.
-Proven offline by `gaussflow-synth/tests/synthesize.rs`. **Remaining:** confirmation/edit UX, cost
-estimates, deploy hardening, a benchmark suite, and a production planning provider.
+**Exit criteria ✅ met:** a prompt produces a `WorkflowSpec` that passes the same validator a
+hand-authored graph does, uses only runtime-supported node types (with bounded repair), is
+rendered for confirmation (with a cost estimate), can be edited/re-validated/regenerated, and —
+once confirmed — is deployed (versioned, immutable, with provenance + required-secrets + quota +
+triggers) and runs end-to-end with real outputs and run trace-back. Planning runs on OpenAI,
+Anthropic, or local Ollama; the deterministic pipeline is proven offline by the synth test suite
+and benchmark. **Remaining (deferred, smaller):** an executor that fires scheduled triggers, a
+vault/cloud secret-manager backend, and a richer interactive edit UI.
 
 ---
 

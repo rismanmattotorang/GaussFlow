@@ -41,6 +41,14 @@ pub struct SynthCommand {
     /// Directory for persisted deployments
     #[arg(long, value_name = "DIR", default_value = ".gaussflow/deployments")]
     pub deploy_dir: PathBuf,
+
+    /// Register a cron schedule trigger on the deployment (with --deploy)
+    #[arg(long, value_name = "CRON")]
+    pub schedule: Option<String>,
+
+    /// Reject the deployment if its estimated model-invocation upper bound exceeds this (quota)
+    #[arg(long, value_name = "N")]
+    pub max_model_calls: Option<usize>,
 }
 
 #[derive(Args, Debug)]
@@ -551,7 +559,19 @@ pub async fn synthesize_workflow(
     let deployment = if cmd.deploy {
         let store = gaussflow_synth::deploy::FileDeploymentStore::new(&cmd.deploy_dir)
             .map_err(|e| anyhow::anyhow!("could not open deployment store: {e}"))?;
-        let dep = gaussflow_synth::deploy::deploy(&result, &cmd.prompt, &store)
+        let options = gaussflow_synth::deploy::DeployOptions {
+            quota: cmd.max_model_calls.map(|n| gaussflow_synth::deploy::Quota {
+                max_model_invocations: Some(n),
+                ..Default::default()
+            }),
+            triggers: cmd
+                .schedule
+                .clone()
+                .map(gaussflow_synth::deploy::Trigger::Schedule)
+                .into_iter()
+                .collect(),
+        };
+        let dep = gaussflow_synth::deploy::deploy_with(&result, &cmd.prompt, options, &store)
             .await
             .map_err(|e| anyhow::anyhow!("deploy failed: {e}"))?;
         println!(

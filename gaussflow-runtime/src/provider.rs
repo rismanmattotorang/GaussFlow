@@ -49,6 +49,8 @@ pub fn provider_for(model: &str) -> Box<dyn LlmProvider> {
     let m = model.to_ascii_lowercase();
     if m.starts_with("mock") {
         Box::new(MockProvider)
+    } else if m.starts_with("ollama") {
+        Box::new(OllamaProvider)
     } else if m.starts_with("claude") || m.starts_with("anthropic") {
         Box::new(AnthropicProvider)
     } else {
@@ -161,5 +163,57 @@ impl LlmProvider for AnthropicProvider {
 
     fn name(&self) -> &'static str {
         "anthropic"
+    }
+}
+
+/// Local Ollama provider (`/api/chat`). Reads `OLLAMA_HOST` (default `http://localhost:11434`).
+/// Model names may be prefixed with `ollama/` or `ollama:` (stripped before the request), e.g.
+/// `ollama/llama3`.
+#[derive(Debug, Default)]
+pub struct OllamaProvider;
+
+#[async_trait]
+impl LlmProvider for OllamaProvider {
+    async fn complete(&self, req: &CompletionRequest) -> Result<String, ProviderError> {
+        let host =
+            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+        let model = req
+            .model
+            .strip_prefix("ollama/")
+            .or_else(|| req.model.strip_prefix("ollama:"))
+            .unwrap_or(&req.model);
+
+        let mut messages = Vec::new();
+        if let Some(system) = &req.system {
+            messages.push(json!({ "role": "system", "content": system }));
+        }
+        messages.push(json!({ "role": "user", "content": req.prompt }));
+
+        let mut body = json!({ "model": model, "messages": messages, "stream": false });
+        if let Some(temp) = req.temperature {
+            body["options"] = json!({ "temperature": temp });
+        }
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{host}/api/chat"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to send request to Ollama ({host}): {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("Ollama returned an error: {e}"))?
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("Failed to parse Ollama response: {e}"))?;
+
+        resp["message"]["content"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "Invalid response format from Ollama".into())
+    }
+
+    fn name(&self) -> &'static str {
+        "ollama"
     }
 }

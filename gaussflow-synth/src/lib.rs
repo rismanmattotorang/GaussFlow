@@ -15,8 +15,13 @@
 pub mod catalog;
 pub mod deploy;
 pub mod plan;
+pub mod secrets;
 
-pub use deploy::{deploy, run_deployment, Deployment, DeploymentStore, InMemoryDeploymentStore};
+pub use deploy::{
+    deploy, deploy_with, run_deployment, DeployOptions, Deployment, DeploymentStore,
+    InMemoryDeploymentStore, Quota, Trigger,
+};
+pub use secrets::{EnvSecretProvider, MapSecretProvider, SecretProvider};
 
 use std::collections::HashMap;
 

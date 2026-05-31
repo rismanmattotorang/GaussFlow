@@ -23,11 +23,12 @@ shows you the plan, and — on your confirmation — deploys and runs it.*
 > secrets are environment-sourced, the core is consolidated to one model + one engine that runs
 > with **no database**, and **all eight node types are implemented** (llm_call, agent, ensemble,
 > router, subgraph, data_processor, conditional, parallel) with conditional/router branch skipping
-> and ensemble fan-in. A **first version of the flagship prompt-to-DAG synthesis layer**
-> (`gaussflow-synth`) now exists: a prompt compiles to a Plan IR, lowers to a `WorkflowSpec`,
-> passes the same validator a hand-authored graph does (with bounded self-repair), and runs on the
-> real engine — proven end-to-end offline. (Live planning needs a capable LLM; the
-> confirmation/edit UX and durable deploy are still being built.) For a verified, file-level
+> and ensemble fan-in. **The flagship prompt-to-DAG synthesis layer** (`gaussflow-synth`) is
+> implemented end-to-end: a prompt compiles to a Plan IR, lowers to a `WorkflowSpec`, passes the
+> same validator a hand-authored graph does (with bounded self-repair), is rendered for
+> confirmation with a cost estimate (editable/regenerable), and — once confirmed — is deployed
+> (versioned, immutable, with provenance/secrets/quota/triggers) and run with trace-back. Planning
+> runs on OpenAI, Anthropic, or local Ollama. For a verified, file-level
 > breakdown of what works versus what is aspirational, read the
 > **[Code Evaluation](docs/CODE_EVALUATION.md)**. For the architecture of
 > the synthesis layer, see the **[Synthesis Pipeline](docs/SYNTHESIS_PIPELINE.md)**. For the path
@@ -104,12 +105,12 @@ capability stands today, evaluated against the product vision above.
 | Capability | Status | Notes |
 |---|---|---|
 | **Clean `cargo build --workspace`** | ✅ **Working** | Builds + tests green; gated in CI. Requires `protoc` (see prerequisites). |
-| **Prompt → DAG synthesis (the compiler)** | 🟡 **Working (v1)** | `gaussflow-synth`: prompt → Plan IR → lower → validate → bounded repair. Capability catalog kept in lockstep with the runtime. Needs a capable LLM for planning; offline-tested with a scripted provider |
-| **Confirm → Deploy → Run lifecycle** | 🟡 **Working (v1)** | Plan + cost/latency estimate rendered for review; edit→re-validate + regenerate-with-feedback; `--deploy` persists versioned, immutable, provenance-bearing deployments with run trace-back; `--run` executes on the real engine. Secrets/quotas/triggers still to come |
+| **Prompt → DAG synthesis (the compiler)** | ✅ **Working** | `gaussflow-synth`: prompt → Plan IR → lower → validate → bounded repair. Capability catalog kept in lockstep with the runtime. Planning runs on OpenAI/Anthropic/Ollama; deterministic pipeline + benchmark tested offline |
+| **Confirm → Deploy → Run lifecycle** | ✅ **Working** | Plan + cost estimate rendered for review; edit→re-validate + regenerate-with-feedback; `--deploy` persists versioned, immutable, provenance-bearing deployments with required-secrets, quotas, triggers, and run trace-back; `--run` executes on the real engine. (A scheduler that *fires* triggers + a vault backend are future work.) |
 | Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core` compiles and validates (cycle/type checks) — the synthesis *target* |
 | Topological single-machine execution | ✅ **Working** | One canonical engine (`gaussflow_runtime::execute_with_store`); runs with **no database** and returns real per-node outputs |
 | Run with **no external dependencies** | ✅ **Working** | `RunStore` trait + in-memory default; SurrealDB is opt-in via `GAUSSFLOW_RUN_STORE=surreal` |
-| LLM node + provider abstraction | ✅ **Working** | `LlmProvider` trait; **OpenAI + Anthropic** providers + deterministic offline `MockProvider`, selected by model name (`gpt*`/`claude*`/`mock*`) or `GAUSSFLOW_LLM_PROVIDER`. Local/Ollama planned |
+| LLM node + provider abstraction | ✅ **Working** | `LlmProvider` trait; **OpenAI + Anthropic + local Ollama** providers + deterministic offline `MockProvider`, selected by model name (`gpt*`/`claude*`/`ollama/*`/`mock*`) or `GAUSSFLOW_LLM_PROVIDER` |
 | Data-processor / conditional nodes | ✅ **Working** | Real deterministic transforms (`extract`/`set`) and comparisons (`eq`/`gt`/…); tested offline |
 | Conditional/router branching | ✅ **Working** | Engine traverses edges by `on` label and skips untaken branches; `router` selects by input field; `subgraph` runs a nested workflow |
 | Ensemble fan-in (named ports) | ✅ **Working** | Handlers receive per-predecessor outputs; `ensemble` aggregates via `collect`/`first`/`vote` |
@@ -134,10 +135,12 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 > (one data model, one execution engine, runs with **no database** and returns real outputs), and
 > Phase 2 ✅ (all eight node types real: `llm_call`, `agent`, `ensemble`, `router`, `subgraph`,
 > `data_processor`, `conditional`, `parallel` — with conditional/router branch skipping and
-> ensemble fan-in). A **v1 of the flagship synthesis layer** (`gaussflow-synth`) compiles a prompt
-> into a validated, runnable graph end-to-end. What's left: hardening synthesis (rich confirm/edit
-> UX, cost estimates, durable deploy, a production planning provider) plus the Phase 3+ items
-> (persistence, observability, security, scale-out). The roadmap is sequenced exactly that way.
+> ensemble fan-in). The **flagship synthesis layer** (`gaussflow-synth`, **Phase S ✅**) compiles a
+> prompt into a validated, runnable graph end-to-end — confirm/edit/estimate, multi-provider
+> planning (OpenAI/Anthropic/Ollama), and versioned/immutable deploy with provenance,
+> required-secrets, quotas, triggers, and run trace-back. What's left is the Phase 3+ platform work
+> (persistence, observability, security/multi-tenancy, scale-out), plus a trigger-firing scheduler
+> and a vault secret backend. The roadmap is sequenced exactly that way.
 
 ---
 

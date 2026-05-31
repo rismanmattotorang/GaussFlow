@@ -5,8 +5,10 @@
 //! linked to the deployment that produced it). Backends implement [`DeploymentStore`]; an
 //! in-memory and a file-backed store are provided.
 //!
-//! Still out of scope for this version (larger ops concerns): secrets-manager resolution, resource
-//! quotas, and trigger/schedule registration.
+//! Deployments also record their **required secrets** (resolved at run time via a
+//! [`crate::secrets::SecretProvider`]), can be gated by a resource [`Quota`] at deploy time, and
+//! carry registered [`Trigger`]s. Still out of scope: an executor that actually *fires* scheduled
+//! triggers, and a concrete vault/cloud secret-manager backend (the env-backed provider is built in).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -40,6 +42,77 @@ pub struct Deployment {
     pub spec_hash: String,
     /// Creation time, Unix seconds.
     pub created_at_unix: u64,
+    /// Names of the secrets this workflow needs at run time (resolved via a `SecretProvider`).
+    #[serde(default)]
+    pub required_secrets: Vec<String>,
+    /// Triggers registered for this deployment (declarations; an executor that fires schedules is
+    /// future work).
+    #[serde(default)]
+    pub triggers: Vec<Trigger>,
+}
+
+impl Deployment {
+    /// Verify that every required secret is resolvable via `provider`. On failure, returns the
+    /// list of missing secret names — call this before running, to fail fast with a clear message.
+    pub fn check_secrets(
+        &self,
+        provider: &dyn crate::secrets::SecretProvider,
+    ) -> Result<(), Vec<String>> {
+        let missing: Vec<String> = self
+            .required_secrets
+            .iter()
+            .filter(|k| provider.get(k).is_none())
+            .cloned()
+            .collect();
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(missing)
+        }
+    }
+}
+
+/// How a deployment can be invoked. Persisted with the deployment; firing schedules/webhooks is a
+/// separate executor concern (not implemented here).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+pub enum Trigger {
+    /// Run on demand.
+    Manual,
+    /// Run on a cron schedule (the cron expression is stored verbatim).
+    Schedule(String),
+    /// Run when a webhook at the given path is called.
+    Webhook(String),
+}
+
+/// Resource limits checked against a plan's [`crate::PlanEstimate`] before deployment.
+#[derive(Debug, Clone)]
+pub struct Quota {
+    /// Maximum number of nodes.
+    pub max_nodes: Option<usize>,
+    /// Maximum upper-bound model invocations (llm_call + agent budgets).
+    pub max_model_invocations: Option<usize>,
+    /// Whether external/network calls are permitted at all.
+    pub allow_external_calls: bool,
+}
+
+impl Default for Quota {
+    fn default() -> Self {
+        Self {
+            max_nodes: None,
+            max_model_invocations: None,
+            allow_external_calls: true,
+        }
+    }
+}
+
+/// Options for [`deploy_with`].
+#[derive(Debug, Clone, Default)]
+pub struct DeployOptions {
+    /// Optional resource quota to enforce at deploy time.
+    pub quota: Option<Quota>,
+    /// Triggers to register with the deployment.
+    pub triggers: Vec<Trigger>,
 }
 
 /// Persistence backend for deployments and their run history.
@@ -72,13 +145,100 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// Deploy a confirmed synthesis result: assign the next version for its workflow name, freeze the
-/// spec with a content hash, record the originating `prompt`, and persist it.
+/// Collect the secret names a workflow spec needs, by inspecting `llm_call`/`agent` node models
+/// (recursing into `subgraph`/`parallel` inline workflows). Deterministic.
+pub fn required_secrets(spec: &Value) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    collect_required_secrets(spec, &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn collect_required_secrets(spec: &Value, out: &mut Vec<String>) {
+    let Some(nodes) = spec.get("nodes").and_then(|n| n.as_array()) else {
+        return;
+    };
+    for node in nodes {
+        let node_type = node.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let params = node.get("params");
+        match node_type {
+            "llm_call" | "agent" => {
+                let model = params
+                    .and_then(|p| p.get("model"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("gpt-3.5-turbo");
+                if let Some(secret) = crate::secrets::secret_for_model(model) {
+                    out.push(secret.to_string());
+                }
+            }
+            "subgraph" => {
+                if let Some(wf) = params.and_then(|p| p.get("workflow")) {
+                    collect_required_secrets(wf, out);
+                }
+            }
+            "parallel" => {
+                if let Some(branches) = params
+                    .and_then(|p| p.get("branches"))
+                    .and_then(|b| b.as_array())
+                {
+                    for branch in branches {
+                        collect_required_secrets(branch, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Check a plan estimate against a quota. Returns a human-readable reason on violation.
+pub fn check_quota(estimate: &crate::PlanEstimate, quota: &Quota) -> Result<(), String> {
+    if let Some(max) = quota.max_nodes {
+        if estimate.node_count > max {
+            return Err(format!(
+                "node count {} exceeds quota of {max}",
+                estimate.node_count
+            ));
+        }
+    }
+    if let Some(max) = quota.max_model_invocations {
+        if estimate.max_model_invocations > max {
+            return Err(format!(
+                "model-invocation upper bound {} exceeds quota of {max}",
+                estimate.max_model_invocations
+            ));
+        }
+    }
+    if !quota.allow_external_calls && estimate.makes_external_calls {
+        return Err("external calls are not permitted by quota".to_string());
+    }
+    Ok(())
+}
+
+/// Deploy a confirmed synthesis result with default options (no quota, no triggers).
 pub async fn deploy(
     result: &SynthesisResult,
     prompt: &str,
     store: &dyn DeploymentStore,
 ) -> Result<Deployment, DeployError> {
+    deploy_with(result, prompt, DeployOptions::default(), store).await
+}
+
+/// Deploy a confirmed synthesis result: enforce any quota, assign the next version for its
+/// workflow name, freeze the spec with a content hash, record the originating `prompt`, the
+/// required secrets, and any triggers, then persist it.
+pub async fn deploy_with(
+    result: &SynthesisResult,
+    prompt: &str,
+    options: DeployOptions,
+    store: &dyn DeploymentStore,
+) -> Result<Deployment, DeployError> {
+    if let Some(quota) = &options.quota {
+        check_quota(&result.estimate, quota)
+            .map_err(|reason| -> DeployError { format!("quota exceeded: {reason}").into() })?;
+    }
+
     let name = result
         .spec
         .get("name")
@@ -102,6 +262,8 @@ pub async fn deploy(
         version,
         prompt: prompt.to_string(),
         spec_hash: sha256_hex(&result.spec_json),
+        required_secrets: required_secrets(&result.spec),
+        triggers: options.triggers,
         spec_json: result.spec_json.clone(),
         created_at_unix: now_unix(),
     };
