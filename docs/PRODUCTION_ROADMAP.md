@@ -232,7 +232,7 @@ vault/cloud secret-manager backend, and a richer interactive edit UI.
 
 ---
 
-## Phase 3 — State, persistence & reliability (Weeks 10–13) 💾 durability — in progress
+## Phase 3 — State, persistence & reliability (Weeks 10–13) 💾 durability ✅ complete
 
 *Objective: workflows survive failures and can resume.*
 
@@ -249,12 +249,22 @@ vault/cloud secret-manager backend, and a richer interactive edit UI.
       resumes, and asserts the completed node ran exactly once, the failed node was retried, and
       the run reached the correct final state; plus completed-run no-op and file-checkpoint
       durability across a fresh store.
-- [ ] **Real content-addressable artifact store** backed by a durable backend (replace the
-      `SurrealStore`/`SkyCache` dummies).
-- [ ] **Backpressure & flow control** on the typed data channels.
+- [x] **Real content-addressable artifact store.** ✅ `gaussflow-core/src/storage.rs`: the dummy
+      `SurrealStore`/`SkyCache` are removed; `ContentStore` now has the in-memory `InMemoryStore`
+      and a **durable** `FileContentStore` — SHA-256 content-addressed (automatic dedup, immutable
+      keys), atomic write-then-rename, `put`/`get`/`has` + a clear `ArtifactNotFound` error. Tested
+      for round-trip, dedup, and cross-store durability.
+- [→] **Backpressure & flow control** — **relocated to Phase 6 (scale-out).** As originally written
+      this described typed data channels in the *removed* parallel/work-stealing engine. The
+      consolidated engine is topologically sequential with **no unbounded queues**; its flow-control
+      primitive is the per-node concurrency semaphore (`settings.concurrency`). Meaningful
+      backpressure returns only with **concurrent/distributed execution** — and, notably, bounded
+      concurrency trades off against the *per-node* checkpointing that powers fine-grained resume
+      (Phase 3's headline). So it correctly belongs with scale-out, not durability.
 
-**Exit criteria:** ✅ **met** — an interrupted run can be resumed to the correct final state
-(`tests/resume.rs`). **Remaining:** durable artifact store and backpressure.
+**Exit criteria:** ✅ **met** — an interrupted run resumes to the correct final state
+(`tests/resume.rs`), and durable content-addressed artifacts are available
+(`storage::FileContentStore`). **Phase 3 complete.**
 
 ---
 
@@ -296,8 +306,11 @@ review has been completed and findings closed.
 
 *Objective: deliver on the distributed-execution vision — only after single-node is rock solid.*
 
-- [ ] **Distributed executor.** Move from single-process to a coordinator/worker model
-      (the quarantined `runtime/runtime/` work-stealing scheduler may be salvageable here).
+- [ ] **Bounded-concurrent / distributed executor.** Move from the single-process, topologically
+      *sequential* engine to bounded-concurrent (then coordinator/worker) execution. This is where
+      **backpressure & flow control** live (relocated from Phase 3): once nodes run concurrently and
+      payloads move over channels/transport, queues need bounding. Note the trade-off with Phase 3's
+      per-node checkpointing — a concurrent engine likely checkpoints per-layer, coarsening resume.
 - [ ] **Data transport** between workers (e.g., Arrow Flight) for large payloads.
 - [ ] **Kubernetes deployment.** Real Dockerfile, Helm chart, autoscaling, resource requests.
 - [ ] **Horizontal scaling & load tests** with documented throughput/latency numbers

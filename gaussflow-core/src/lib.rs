@@ -94,6 +94,7 @@ pub use crate::model::{EdgeSpec, NodeSpec, NodeType, WorkflowSettings, WorkflowS
 pub use crate::policy::Policy;
 pub use crate::resource::{ResourceManager, ResourceSpec, ResourceUsage};
 pub use crate::scheduler::{PriorityScheduler, Scheduler, SchedulerConfig};
+pub use crate::storage::{content_key, ContentStore, FileContentStore, InMemoryStore};
 pub use crate::validator::{DagValidator, DefaultDagValidator};
 pub use crate::versioning::{VersionManager, VersionedWorkflow, VersioningError};
 
@@ -129,4 +130,7 @@ pub enum DagError {
 
     #[error("Node '{0}' timed out")]
     Timeout(String),
+
+    #[error("Artifact with key '{0}' was not found.")]
+    ArtifactNotFound(String),
 }

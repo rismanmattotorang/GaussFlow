@@ -125,7 +125,7 @@ capability stands today, evaluated against the product vision above.
 | Python bindings (PyO3) | 🟡 **Partial** | `validate` + async `execute` exposed |
 | Terminal UI (TUI) | 🟡 **Partial** | Monitoring UI scaffold |
 | Anthropic / Ollama providers, streaming | 🔴 **Planned** | `LlmProvider` abstraction is in place (OpenAI + mock); more backends + token streaming are enhancements |
-| Content-addressable artifact store | 🔴 **Planned** | In-memory store works; SurrealDB store is a stub |
+| Content-addressable artifact store | ✅ **Working** | SHA-256 content-addressed; in-memory + **durable** `FileContentStore` (dedup, atomic writes); dummy SurrealDB/SkyTable stores removed |
 | Distributed checkpointing & time-travel | 🟡 **Partial** | Single-machine checkpoint/resume works (above); distributed/time-travel planned |
 | RBAC, audit, SLA, compliance | 🔴 **Planned** | Config types defined; enforcement not implemented |
 | Distributed / K8s / edge execution | 🔴 **Planned** | Feature flags exist; runtime not implemented |
@@ -139,10 +139,11 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 > ensemble fan-in). The **flagship synthesis layer** (`gaussflow-synth`, **Phase S ✅**) compiles a
 > prompt into a validated, runnable graph end-to-end — confirm/edit/estimate, multi-provider
 > planning (OpenAI/Anthropic/Ollama), and versioned/immutable deploy with provenance,
-> required-secrets, quotas, triggers, and run trace-back. **Phase 3 is underway** — checkpoint +
-> resume (crash recovery, idempotent) works and is failure-injection tested; remaining there are a
-> durable content-addressable artifact store and backpressure. Beyond that: observability,
-> security/multi-tenancy, and scale-out. The roadmap is sequenced exactly that way.
+> required-secrets, quotas, triggers, and run trace-back. **Phase 3 ✅** adds durability:
+> checkpoint + resume (crash recovery, idempotent, failure-injection tested) and a durable
+> content-addressed artifact store. Next: observability (Phase 4), security/multi-tenancy
+> (Phase 5), and scale-out incl. bounded-concurrent execution + backpressure (Phase 6). The
+> roadmap is sequenced exactly that way.
 
 ---
 
