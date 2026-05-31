@@ -323,21 +323,31 @@ input-validation, and an external security review (pre-GA).
 
 ---
 
-## Phase 6 — Scale-out (Weeks 20–26) 🌐 distribution
+## Phase 6 — Scale-out (Weeks 20–26) 🌐 distribution — in progress
 
 *Objective: deliver on the distributed-execution vision — only after single-node is rock solid.*
 
-- [ ] **Bounded-concurrent / distributed executor.** Move from the single-process, topologically
-      *sequential* engine to bounded-concurrent (then coordinator/worker) execution. This is where
-      **backpressure & flow control** live (relocated from Phase 3): once nodes run concurrently and
-      payloads move over channels/transport, queues need bounding. Note the trade-off with Phase 3's
-      per-node checkpointing — a concurrent engine likely checkpoints per-layer, coarsening resume.
+- [x] **Bounded-concurrent executor + backpressure.** ✅ `gaussflow-runtime/src/concurrent.rs`
+      (`execute_concurrent[_with]`): a ready-queue scheduler that runs independent nodes
+      concurrently, **bounded by `settings.concurrency`** (real backpressure — at most N node tasks
+      in flight). Honors dependencies + conditional edge-skipping (reuses `edge_taken`) and per-node
+      timeout/retry. Kept *separate* from `execute_resumable` (concurrency vs. fine-grained
+      per-node checkpointing is an explicit trade-off). Tested for measured speedup + the bound.
+- [x] **Kubernetes/containerization (build artifacts).** ✅ Multi-stage `Dockerfile` (installs
+      `protoc`, release-builds web+CLI, slim runtime) + `docker-compose.yml` (web, optional
+      SurrealDB profile) + `.dockerignore`. *(A Helm chart + autoscaling manifests remain.)*
+- [x] **Throughput measurement.** ✅ The concurrency test measures a real speedup vs. sequential
+      (replacing unsubstantiated perf claims with a measured one); per-node timings feed the
+      Prometheus summary.
+- [ ] **Distributed executor (coordinator/worker).** The concurrent scheduler is the foundation;
+      a multi-process coordinator/worker split + node dispatch over the network remains (needs
+      real infra to be meaningful).
 - [ ] **Data transport** between workers (e.g., Arrow Flight) for large payloads.
-- [ ] **Kubernetes deployment.** Real Dockerfile, Helm chart, autoscaling, resource requests.
-- [ ] **Horizontal scaling & load tests** with documented throughput/latency numbers
-      (replace the unsubstantiated "performance targets met" claim with real benchmarks).
+- [ ] **Helm chart + multi-node load tests** with published throughput/latency numbers.
 
-**Exit criteria:** a workflow runs across multiple worker nodes with published benchmark results.
+**Exit criteria (single-node ✅):** workflows run with **bounded concurrency + backpressure**
+(verified) and ship as a container. **Remaining (needs a cluster):** the coordinator/worker split,
+data transport, a Helm chart, and multi-node benchmarks.
 
 ---
 

@@ -1,0 +1,31 @@
+# Local GaussFlow stack: the web server, plus an optional SurrealDB for durable run persistence.
+#
+#   docker compose up --build          # web only (in-memory run store, no DB)
+#   docker compose --profile db up     # web + SurrealDB (durable runs)
+#
+# Set GAUSSFLOW_JWT_SECRET to a strong value to enable the authenticated API.
+
+services:
+  web:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      RUST_LOG: info
+      # Auth: set this to enable mutating API endpoints (unset ⇒ mutations return 503).
+      GAUSSFLOW_JWT_SECRET: ${GAUSSFLOW_JWT_SECRET:-}
+      # Run store: "memory" (default) or "surreal". For surreal, point at the db service below.
+      GAUSSFLOW_RUN_STORE: ${GAUSSFLOW_RUN_STORE:-memory}
+      GAUSSFLOW_SURREAL_URL: ws://db:8000/rpc
+      GAUSSFLOW_DB_USER: root
+      GAUSSFLOW_DB_PASS: ${GAUSSFLOW_DB_PASS:-root}
+      # LLM providers (optional; required only for live llm_call/agent/synth).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+  db:
+    image: surrealdb/surrealdb:latest
+    profiles: ["db"]
+    command: start --user root --pass ${GAUSSFLOW_DB_PASS:-root} memory
+    ports:
+      - "8000:8000"

@@ -1,0 +1,9 @@
+target/
+.git/
+.github/
+.gaussflow/
+.env
+.env.*
+**/*.md
+docs/
+examples_legacy/

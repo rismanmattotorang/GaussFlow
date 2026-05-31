@@ -130,7 +130,9 @@ capability stands today, evaluated against the product vision above.
 | Distributed checkpointing & time-travel | 🟡 **Partial** | Single-machine checkpoint/resume works (above); distributed/time-travel planned |
 | API auth (JWT) + RBAC | ✅ **Working** | `gaussflow-security`: HS256 JWT (secret from env, never defaulted), role-based authz; web middleware rejects unauthorized mutations (401/403/503) |
 | Tamper-evident audit + PII redaction | ✅ **Working** | Hash-chained audit log (`verify()`, `GET /api/audit`); recursive email redaction for JSON. SLA/compliance still planned |
-| Distributed / K8s / edge execution | 🔴 **Planned** | Feature flags exist; runtime not implemented |
+| Bounded-concurrent execution | ✅ **Working** | `execute_concurrent` runs independent nodes in parallel, bounded by `settings.concurrency` (backpressure); measured speedup + bound tested |
+| Containerization | ✅ **Working** | Multi-stage `Dockerfile` + `docker-compose.yml` (web + optional SurrealDB) |
+| Distributed (multi-node) / Helm / edge | 🔴 **Planned** | Concurrent scheduler is the foundation; coordinator/worker split + Helm need a cluster |
 
 Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 
@@ -146,9 +148,11 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 > Prometheus metrics fed by the executor, the web dashboard wired to the **real engine** (no more
 > simulation) streaming live run events, and run/node tracing correlation IDs. **Phase 5 ✅** adds
 > security: JWT auth + RBAC on the API (unauthorized mutations rejected), a tamper-evident
-> hash-chained audit log, and PII redaction (`gaussflow-security`). Next: scale-out incl.
-> bounded-concurrent execution + backpressure (Phase 6) and release engineering (Phase 7). The
-> roadmap is sequenced exactly that way.
+> hash-chained audit log, and PII redaction (`gaussflow-security`). **Phase 6 (in progress)** adds
+> single-node scale-out: a bounded-concurrent executor with backpressure (measured speedup) and a
+> Docker/Compose deployment. What remains is genuinely cluster-dependent — a coordinator/worker
+> split, a Helm chart, and multi-node load tests — plus release engineering (Phase 7). The roadmap
+> is sequenced exactly that way.
 
 ---
 

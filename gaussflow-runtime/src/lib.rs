@@ -13,12 +13,14 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
 pub mod checkpoint;
+pub mod concurrent;
 pub mod metrics;
 pub mod provider;
 pub mod store;
 pub use checkpoint::{
     CheckpointStore, FileCheckpointStore, InMemoryCheckpointStore, NoopCheckpointStore,
 };
+pub use concurrent::{execute_concurrent, execute_concurrent_with};
 pub use store::{InMemoryRunStore, RunStore, SurrealRunStore};
 
 static INIT: Once = Once::new();
@@ -518,7 +520,7 @@ async fn save_checkpoint(
 }
 
 /// The metric/label name for a node type (its snake_case serde name, e.g. `llm_call`).
-fn node_type_name(node_type: &gaussflow_core::model::NodeType) -> String {
+pub(crate) fn node_type_name(node_type: &gaussflow_core::model::NodeType) -> String {
     serde_json::to_value(node_type)
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
@@ -531,7 +533,7 @@ fn node_type_name(node_type: &gaussflow_core::model::NodeType) -> String {
 /// - `failure`: taken when the source produced an `error` field.
 /// - any other label: taken when the source's `branch` or `route` output equals the label — this
 ///   is how `conditional` and `router` nodes select which downstream paths execute.
-fn edge_taken(on: &str, src_out: Option<&Value>) -> bool {
+pub(crate) fn edge_taken(on: &str, src_out: Option<&Value>) -> bool {
     match on {
         "success" => src_out.is_some_and(|o| o.get("error").is_none()),
         "failure" => src_out.is_some_and(|o| o.get("error").is_some()),
