@@ -47,6 +47,8 @@ pub struct AppState {
     pub connected_clients: Arc<RwLock<usize>>,
     pub start_time: std::time::Instant,
     pub execution_counter: Arc<AtomicU64>,
+    /// Tamper-evident audit log of authorized mutating API calls.
+    pub audit: Arc<std::sync::Mutex<gaussflow_security::AuditLog>>,
 }
 
 impl AppState {
@@ -59,6 +61,7 @@ impl AppState {
             connected_clients: Arc::new(RwLock::new(0)),
             start_time: std::time::Instant::now(),
             execution_counter: Arc::new(AtomicU64::new(0)),
+            audit: Arc::new(std::sync::Mutex::new(gaussflow_security::AuditLog::new())),
         }
     }
 
@@ -409,9 +412,76 @@ async fn main() -> anyhow::Result<()> {
 // Router Setup
 // ============================================================================
 
+/// Auth boundary for the API.
+///
+/// Safe (read) methods pass through publicly; mutating requests (POST/PUT/DELETE/PATCH) require a
+/// valid `Authorization: Bearer <jwt>` whose roles permit mutations. If `GAUSSFLOW_JWT_SECRET` is
+/// unset the API is treated as **misconfigured** (503) rather than silently open. Each authorized
+/// mutation is recorded in the tamper-evident audit log.
+async fn require_auth(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::Method;
+    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+        return next.run(req).await;
+    }
+
+    let secret = match gaussflow_security::auth::secret_from_env() {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "auth not configured: set GAUSSFLOW_JWT_SECRET",
+            )
+                .into_response()
+        }
+    };
+
+    let token = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "));
+    let Some(token) = token else {
+        return (StatusCode::UNAUTHORIZED, "missing bearer token").into_response();
+    };
+    let claims = match gaussflow_security::auth::verify(&secret, token) {
+        Ok(c) => c,
+        Err(_) => return (StatusCode::UNAUTHORIZED, "invalid or expired token").into_response(),
+    };
+    if !gaussflow_security::rbac::authorize(
+        &claims.roles,
+        gaussflow_security::rbac::Action::ExecuteWorkflow,
+    ) {
+        return (StatusCode::FORBIDDEN, "insufficient role for this action").into_response();
+    }
+
+    // Record the authorized mutation in the tamper-evident audit log.
+    let action = req.method().as_str().to_string();
+    let target = req.uri().path().to_string();
+    if let Ok(mut log) = state.audit.lock() {
+        log.append(&claims.sub, &action, &target);
+    }
+
+    next.run(req).await
+}
+
+/// Return the audit log and whether its hash chain verifies.
+async fn get_audit(State(state): State<AppState>) -> impl IntoResponse {
+    let log = state.audit.lock().unwrap();
+    Json(serde_json::json!({
+        "valid": log.verify(),
+        "count": log.events().len(),
+        "events": log.events(),
+    }))
+}
+
 fn create_router(state: AppState) -> Router {
     // API routes
     let api_routes = Router::new()
+        .route("/audit", get(get_audit))
         // Workflow endpoints
         .route("/workflows", get(list_workflows).post(create_workflow))
         .route(
@@ -453,7 +523,13 @@ fn create_router(state: AppState) -> Router {
         .route("/executions/*path", get(serve_index))
         .route("/settings", get(serve_index))
         // API routes
-        .nest("/api", api_routes)
+        .nest(
+            "/api",
+            api_routes.layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                require_auth,
+            )),
+        )
         // WebSocket endpoint
         .route("/ws", get(websocket_handler))
         // Static files

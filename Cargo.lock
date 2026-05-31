@@ -2202,6 +2202,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gaussflow-security"
+version = "0.0.1"
+dependencies = [
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "gaussflow-synth"
 version = "0.0.1"
 dependencies = [
@@ -2263,6 +2274,7 @@ dependencies = [
  "futures-util",
  "gaussflow-core",
  "gaussflow-runtime",
+ "gaussflow-security",
  "parking_lot",
  "reqwest",
  "serde",

@@ -293,20 +293,33 @@ dashboard (both deployment/infra, deferred to release engineering).
 
 ---
 
-## Phase 5 — Security & multi-tenancy (Weeks 16–19) 🔐 enterprise-readiness
+## Phase 5 — Security & multi-tenancy (Weeks 16–19) 🔐 enterprise-readiness — in progress
 
-*Objective: make the "enterprise" types actually enforce something.*
+*Objective: make the "enterprise" types actually enforce something. A new `gaussflow-security`
+crate (auth / rbac / audit / pii) provides the primitives; the web API wires them in.*
 
-- [ ] **AuthN/AuthZ on the web API** (JWT/OAuth2) — secret from a vault, never defaulted.
-- [ ] **RBAC enforcement** that consumes the existing policy types.
-- [ ] **Audit logging** that emits real, tamper-evident audit events.
-- [ ] **Secrets management** integration (env injection + HashiCorp Vault / cloud secret managers).
-- [ ] **PII detection/redaction** middleware wired into the data path (currently config-only).
-- [ ] **Input validation & resource quotas** to prevent abuse / runaway workflows.
-- [ ] **Threat model + external security review** of the API and execution sandbox.
+- [x] **AuthN/AuthZ on the web API.** ✅ `gaussflow-security::auth` (JWT/HS256) + a web auth
+      middleware: mutating requests (POST/PUT/DELETE/PATCH) require a valid `Bearer` token; reads
+      stay public. The signing secret is read from `GAUSSFLOW_JWT_SECRET` and **never defaulted**
+      (unset ⇒ 503 misconfigured, not silently open). Missing/invalid token ⇒ 401.
+- [x] **RBAC enforcement.** ✅ `gaussflow-security::rbac` (viewer ⊂ operator ⊂ admin); the
+      middleware authorizes mutations against the token's roles (403 if insufficient).
+- [x] **Audit logging (tamper-evident).** ✅ `gaussflow-security::audit`: an append-only,
+      SHA-256 **hash-chained** log that detects edits/deletes/reordering (`verify()`). Wired at the
+      web auth boundary (every authorized mutation is recorded) and exposed at `GET /api/audit`
+      with a chain-validity flag.
+- [x] **PII detection/redaction.** ✅ `gaussflow-security::pii::redact_json` redacts email-like
+      PII from JSON, recursively and structure-preserving. *(Available + tested; wiring it into the
+      log/storage path everywhere is a follow-up.)*
+- [→] **Secrets management.** Env-sourced secrets are in place (Phase S; `SecretProvider`); a
+      HashiCorp Vault / cloud secret-manager backend is deferred (infra).
+- [ ] **Input validation & resource quotas.** Synthesis-time quotas exist (Phase S); broader API
+      input validation / runaway-workflow limits remain.
+- [ ] **Threat model + external security review** (process; deferred to pre-GA).
 
-**Exit criteria:** the API rejects unauthorized requests; audit trail is verifiable; a security
-review has been completed and findings closed.
+**Exit criteria:** ✅ the API rejects unauthorized requests (401/403/503), and the audit trail is
+verifiable (hash-chained, `verify()` + `GET /api/audit`). **Remaining:** a vault backend, broader
+input-validation, and an external security review (pre-GA).
 
 ---
 

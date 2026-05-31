@@ -1,0 +1,12 @@
+[package]
+name = "gaussflow-security"
+version = "0.0.1"
+edition = "2021"
+description = "GaussFlow security: JWT auth, RBAC, tamper-evident audit log, and PII redaction."
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+jsonwebtoken = "8"
+sha2 = "0.10"
+thiserror = "1.0"

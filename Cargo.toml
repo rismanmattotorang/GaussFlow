@@ -3,6 +3,7 @@ members = [
     "gaussflow-core",
     "gaussflow-runtime",
     "gaussflow-synth",
+    "gaussflow-security",
     "gaussflow-cli",
     "gaussflow-py",
     "gaussflow-web",

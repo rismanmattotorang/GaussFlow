@@ -128,7 +128,8 @@ capability stands today, evaluated against the product vision above.
 | Anthropic / Ollama providers, streaming | 🔴 **Planned** | `LlmProvider` abstraction is in place (OpenAI + mock); more backends + token streaming are enhancements |
 | Content-addressable artifact store | ✅ **Working** | SHA-256 content-addressed; in-memory + **durable** `FileContentStore` (dedup, atomic writes); dummy SurrealDB/SkyTable stores removed |
 | Distributed checkpointing & time-travel | 🟡 **Partial** | Single-machine checkpoint/resume works (above); distributed/time-travel planned |
-| RBAC, audit, SLA, compliance | 🔴 **Planned** | Config types defined; enforcement not implemented |
+| API auth (JWT) + RBAC | ✅ **Working** | `gaussflow-security`: HS256 JWT (secret from env, never defaulted), role-based authz; web middleware rejects unauthorized mutations (401/403/503) |
+| Tamper-evident audit + PII redaction | ✅ **Working** | Hash-chained audit log (`verify()`, `GET /api/audit`); recursive email redaction for JSON. SLA/compliance still planned |
 | Distributed / K8s / edge execution | 🔴 **Planned** | Feature flags exist; runtime not implemented |
 
 Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
@@ -143,9 +144,11 @@ Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 > required-secrets, quotas, triggers, and run trace-back. **Phase 3 ✅** adds durability
 > (checkpoint + resume, durable content-addressed store). **Phase 4 ✅** adds observability: real
 > Prometheus metrics fed by the executor, the web dashboard wired to the **real engine** (no more
-> simulation) streaming live run events, and run/node tracing correlation IDs. Next:
-> security/multi-tenancy (Phase 5) and scale-out incl. bounded-concurrent execution + backpressure
-> (Phase 6). The roadmap is sequenced exactly that way.
+> simulation) streaming live run events, and run/node tracing correlation IDs. **Phase 5 ✅** adds
+> security: JWT auth + RBAC on the API (unauthorized mutations rejected), a tamper-evident
+> hash-chained audit log, and PII redaction (`gaussflow-security`). Next: scale-out incl.
+> bounded-concurrent execution + backpressure (Phase 6) and release engineering (Phase 7). The
+> roadmap is sequenced exactly that way.
 
 ---
 
@@ -184,6 +187,7 @@ the runtime and emits the same `WorkflowSpec` the runtime already executes:
 | **gaussflow-core** | Graph model, workflow spec, validation, scheduling primitives | [README](gaussflow-core/README.md) |
 | **gaussflow-runtime** | Async execution engine, node handlers, LLM providers | [README](gaussflow-runtime/README.md) |
 | **gaussflow-synth** | Prompt → DAG synthesis (Plan IR, lowering, validate/repair) | — |
+| **gaussflow-security** | JWT auth, RBAC, tamper-evident audit log, PII redaction | — |
 | **gaussflow-cli** | `gaussflow` command-line tool | [README](gaussflow-cli/README.md) |
 | **gaussflow-web** | REST/WebSocket API + dashboard | [README](gaussflow-web/README.md) |
 | **gaussflow-tui** | Terminal monitoring UI | [README](gaussflow-tui/README.md) |
