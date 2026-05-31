@@ -104,14 +104,77 @@ impl NodeHandler for EnsembleHandler {
 pub struct RouterHandler;
 #[async_trait]
 impl NodeHandler for RouterHandler {
+    /// Chooses a downstream route by switching on an input field.
+    ///
+    /// Params: `field` (input field to switch on), `routes` (object mapping the field's string
+    /// value to a route label), and optional `default`. Emits `{ route }`; the engine then takes
+    /// only the outgoing edge(s) whose `on` equals that route label.
     async fn execute(
         &self,
         node: &NodeSpec,
-        _input: Value,
+        input: Value,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let field = node
+            .params
+            .get("field")
+            .and_then(|v| v.as_str())
+            .ok_or("router requires a string 'field' param")?;
+
+        // Normalize the looked-up value to a string key (strings stay as-is; others via Display).
+        let key = match input.get(field) {
+            Some(Value::String(s)) => s.clone(),
+            Some(other) => other.to_string(),
+            None => String::new(),
+        };
+
+        let default_route = node
+            .params
+            .get("default")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let route = node
+            .params
+            .get("routes")
+            .and_then(|r| r.get(&key))
+            .and_then(|v| v.as_str())
+            .unwrap_or(default_route)
+            .to_string();
+
         Ok(json!({
             "router": node.id,
-            "routed": _input
+            "route": route,
+        }))
+    }
+}
+
+/// Handler for Subgraph nodes: runs a nested workflow and returns its result.
+#[derive(Debug)]
+pub struct SubgraphHandler;
+
+#[async_trait]
+impl NodeHandler for SubgraphHandler {
+    /// Executes an inline nested workflow (the `workflow` param, a full workflow spec object) on a
+    /// fresh in-memory engine, passing this node's input through as the nested run's input.
+    async fn execute(
+        &self,
+        node: &NodeSpec,
+        input: Value,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let wf = node
+            .params
+            .get("workflow")
+            .ok_or("subgraph requires a 'workflow' param (an inline workflow spec)")?;
+        let wf_json = serde_json::to_string(wf)?;
+        let dag = gaussflow_core::TypeSafeDag::from_json(&wf_json)
+            .map_err(|e| format!("subgraph: invalid nested workflow: {e}"))?;
+
+        let store = crate::InMemoryRunStore::new();
+        let result = crate::execute_with_store(dag, input, &store).await?;
+
+        Ok(json!({
+            "subgraph": node.id,
+            "result": result.get("output").cloned().unwrap_or(Value::Null),
+            "outputs": result.get("outputs").cloned().unwrap_or(Value::Null),
         }))
     }
 }
@@ -251,7 +314,7 @@ pub fn handler_for(kind: &NodeType) -> Box<dyn NodeHandler> {
         NodeType::Agent => Box::new(AgentHandler),
         NodeType::Ensemble => Box::new(EnsembleHandler),
         NodeType::Router => Box::new(RouterHandler),
-        NodeType::Subgraph => Box::new(AgentHandler),
+        NodeType::Subgraph => Box::new(SubgraphHandler),
         NodeType::DataProcessor => Box::new(DataProcessorHandler),
         NodeType::Conditional => Box::new(ConditionalHandler),
         NodeType::Parallel => Box::new(ParallelHandler),

@@ -81,3 +81,19 @@ async fn conditional_evaluates_comparisons() {
     assert_eq!(out["matched"], json!(false));
     assert_eq!(out["branch"], json!("false"));
 }
+
+#[tokio::test]
+async fn subgraph_runs_a_nested_workflow() {
+    // The subgraph node embeds a full workflow that extracts the `name` field from the input.
+    let node = r#"{ "id": "only", "type": "subgraph", "params": { "workflow": {
+        "name": "nested",
+        "nodes": [ { "id": "inner", "type": "data_processor",
+                     "params": { "op": "extract", "field": "name" } } ],
+        "connections": [],
+        "settings": { "concurrency": 1 }
+    } } }"#;
+    let out = run_single(node).await;
+    // The nested run's final output is surfaced under `result`.
+    assert_eq!(out["result"]["result"], json!("ada"));
+    assert!(out["outputs"]["inner"].is_object());
+}

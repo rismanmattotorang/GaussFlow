@@ -1,9 +1,9 @@
 //! GaussFlow Runtime – Phase 2 scheduler
 
 use gaussflow_core::TypeSafeDag;
-use petgraph::visit::Topo;
+use petgraph::visit::{EdgeRef, Topo};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::Duration;
@@ -154,33 +154,58 @@ pub async fn execute_with(
     let mut outputs: HashMap<String, Value> = HashMap::new();
     outputs.insert("input".to_string(), input);
     let mut last_node_id: Option<String> = None;
+    // Node ids that were activated (ran). Used for conditional edge traversal: a node only
+    // activates downstream edges if it itself ran.
+    let mut active_set: HashSet<String> = HashSet::new();
 
     while let Some(nx) = topo.next(&dag.graph) {
         if dag.settings.fail_fast && outputs.values().any(|v| v.get("error").is_some()) {
             break;
         }
         let n = &dag.graph[nx];
+        let node_id = n.id.clone();
 
-        // Input assembly: merge the outputs of all predecessors. Source nodes (no predecessors)
-        // receive the workflow's run input, so input flows into the graph at its roots.
-        let predecessors = dag
+        // Activation + input assembly with conditional edge traversal.
+        // A source node (no incoming edges) is always active and receives the run input.
+        // Otherwise the node is active iff at least one incoming edge is "taken" from an active
+        // predecessor (see `edge_taken`); its input is the merge of those predecessors' outputs.
+        // Nodes that are not activated are skipped, and their outgoing edges are never taken.
+        let incoming: Vec<_> = dag
             .graph
-            .neighbors_directed(nx, petgraph::Direction::Incoming);
-        let mut merged_input = json!({});
-        let mut had_predecessor = false;
-        for p_nx in predecessors {
-            had_predecessor = true;
-            if let Some(output) = outputs.get(&dag.graph[p_nx].id) {
-                if let Some(obj) = output.as_object() {
-                    for (k, v) in obj {
-                        merged_input[k] = v.clone();
+            .edges_directed(nx, petgraph::Direction::Incoming)
+            .collect();
+
+        let (is_active, merged_input) = if incoming.is_empty() {
+            (
+                true,
+                outputs.get("input").cloned().unwrap_or_else(|| json!({})),
+            )
+        } else {
+            let mut active = false;
+            let mut merged = json!({});
+            for e in &incoming {
+                let src_id = dag.graph[e.source()].id.clone();
+                if !active_set.contains(&src_id) {
+                    continue;
+                }
+                let src_out = outputs.get(&src_id);
+                if edge_taken(&e.weight().on, src_out) {
+                    active = true;
+                    if let Some(obj) = src_out.and_then(|o| o.as_object()) {
+                        for (k, v) in obj {
+                            merged[k] = v.clone();
+                        }
                     }
                 }
             }
+            (active, merged)
+        };
+
+        if !is_active {
+            outputs.insert(node_id, json!({ "skipped": true }));
+            continue;
         }
-        if !had_predecessor {
-            merged_input = outputs.get("input").cloned().unwrap_or_else(|| json!({}));
-        }
+        active_set.insert(node_id);
 
         let handler = resolve(&n.node_type);
 
@@ -276,4 +301,21 @@ pub async fn execute_with(
         "output": final_output,
         "outputs": outputs_map,
     }))
+}
+
+/// Decide whether a graph edge is "taken", given its `on` label and the source node's output.
+///
+/// - `success` (the default): taken when the source completed without an `error` field.
+/// - `failure`: taken when the source produced an `error` field.
+/// - any other label: taken when the source's `branch` or `route` output equals the label — this
+///   is how `conditional` and `router` nodes select which downstream paths execute.
+fn edge_taken(on: &str, src_out: Option<&Value>) -> bool {
+    match on {
+        "success" => src_out.is_some_and(|o| o.get("error").is_none()),
+        "failure" => src_out.is_some_and(|o| o.get("error").is_some()),
+        label => src_out.is_some_and(|o| {
+            o.get("branch").and_then(|b| b.as_str()) == Some(label)
+                || o.get("route").and_then(|r| r.as_str()) == Some(label)
+        }),
+    }
 }

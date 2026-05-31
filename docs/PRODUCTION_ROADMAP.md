@@ -130,23 +130,27 @@ complete.**
       (`passthrough` / `extract` / `set`); `Conditional` evaluates real comparisons
       (`eq`/`ne`/`gt`/`lt`/`ge`/`le`) and emits a `matched`/`branch` decision. Covered by the
       `node_handlers` tests.
-- [ ] **Conditional/Router edge traversal.** Engine prerequisite: traverse outgoing edges by their
-      `on`/condition and **skip** nodes whose inbound branch wasn't taken. Today the engine runs
-      every node in topological order; `Conditional` computes the decision but the engine does not
-      yet skip branches. This unlocks real `Router` and branch semantics.
+- [x] **Conditional/Router edge traversal.** ✅ The engine now evaluates each outgoing edge's `on`
+      label against the source node's output and **skips** nodes on untaken branches (`edge_taken`
+      in `gaussflow-runtime/src/lib.rs`): `success`/`failure` plus arbitrary labels matched against
+      a node's `branch`/`route` output. Covered by the `edge_traversal` tests.
+- [x] **Router node.** ✅ `RouterHandler` switches on an input field via a `routes` map (+ `default`)
+      and emits a `route` the engine uses to take the matching edge. *Policy-based selection
+      (cost/capability) remains future work.*
+- [x] **Subgraph node.** ✅ `SubgraphHandler` runs an inline nested workflow on a fresh in-memory
+      engine and surfaces its result. (Dispatch no longer aliases Subgraph to the agent stub.)
 - [ ] **Ensemble node.** Needs per-predecessor inputs (named ports) — the engine currently
       shallow-merges all predecessor outputs into one object, which is lossy for fan-in. Add
       per-predecessor inputs, then pluggable aggregation (vote / concat / reduce).
-- [ ] **Router node.** Real provider/branch selection from policy (cost, capability, edge
-      conditions), built on the edge-traversal work above.
 - [ ] **Agent node.** A real tool-use/reasoning loop with a bounded step budget (on the provider
       abstraction).
-- [ ] **Subgraph node.** Spawn a nested engine instance (`execute_with_store`) and stitch results
-      back. (Dispatch currently aliases Subgraph to the agent stub.)
+- [ ] **Parallel node.** Currently a passthrough stub.
+- [ ] **More providers.** Real Anthropic + local/Ollama providers behind `LlmProvider`.
 - [ ] **Streaming.** Token streaming for LLM nodes surfaced over the API/WebSocket.
 
 **Exit criteria:** every node type in `NodeType` either has a real implementation or is removed
-from the public enum and docs.
+from the public enum and docs. **Done so far:** `llm_call`, `data_processor`, `conditional`,
+`router`, `subgraph`. **Remaining:** `ensemble`, `agent`, `parallel`.
 
 ---
 
