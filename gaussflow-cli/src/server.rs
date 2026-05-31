@@ -8,11 +8,18 @@ use surrealdb::opt::auth::Root;
 use surrealdb::Surreal;
 use warp::{Filter, Rejection, Reply};
 
-const SURREAL_URL: &str = "http://127.0.0.1:8000";
-const DB_USER: &str = "root";
-const DB_PASS: &str = "REDACTED";
-const NS: &str = "gaussflow";
-const DB: &str = "gaussflow";
+/// Resolve SurrealDB connection settings from the environment, falling back to local-dev
+/// defaults. No credentials are hardcoded; set `GAUSSFLOW_DB_PASS` for any non-local deployment.
+/// Returns `(url, user, password, namespace, database)`.
+fn surreal_settings() -> (String, String, String, String, String) {
+    (
+        std::env::var("GAUSSFLOW_SURREAL_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string()),
+        std::env::var("GAUSSFLOW_DB_USER").unwrap_or_else(|_| "root".to_string()),
+        std::env::var("GAUSSFLOW_DB_PASS").unwrap_or_else(|_| "root".to_string()),
+        std::env::var("GAUSSFLOW_DB_NS").unwrap_or_else(|_| "gaussflow".to_string()),
+        std::env::var("GAUSSFLOW_DB_NAME").unwrap_or_else(|_| "gaussflow".to_string()),
+    )
+}
 
 const SCHEMA_SQL: &str = r#"
 DEFINE NAMESPACE gaussflow;
@@ -43,10 +50,11 @@ pub async fn start_server() -> Result<()> {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(3030);
-    // Connect or bootstrap SurrealDB
-    let db = Surreal::new::<Http>(SURREAL_URL).await?;
-    db.signin(Root { username: DB_USER, password: DB_PASS }).await?;
-    db.use_ns(NS).use_db(DB).await?;
+    // Connect or bootstrap SurrealDB using environment-sourced credentials.
+    let (surreal_url, db_user, db_pass, ns, db_name) = surreal_settings();
+    let db = Surreal::new::<Http>(surreal_url.as_str()).await?;
+    db.signin(Root { username: db_user.as_str(), password: db_pass.as_str() }).await?;
+    db.use_ns(ns.as_str()).use_db(db_name.as_str()).await?;
 
     // Try to run schema – if tables exist SurrealDB will ignore duplicates.
     let _ = db.query(SCHEMA_SQL).await?;
@@ -118,13 +126,14 @@ async fn handle_run(_: (), body: serde_json::Value) -> Result<impl Reply, Reject
 }
 
 async fn handle_get_run(_: (), id: String) -> Result<impl Reply, Rejection> {
-    let db = Surreal::new::<Http>(SURREAL_URL)
+    let (surreal_url, db_user, db_pass, ns, db_name) = surreal_settings();
+    let db = Surreal::new::<Http>(surreal_url.as_str())
         .await
         .map_err(|_| warp::reject())?;
-    db.signin(Root { username: DB_USER, password: DB_PASS })
+    db.signin(Root { username: db_user.as_str(), password: db_pass.as_str() })
         .await
         .map_err(|_| warp::reject())?;
-    db.use_ns(NS).use_db(DB).await.map_err(|_| warp::reject())?;
+    db.use_ns(ns.as_str()).use_db(db_name.as_str()).await.map_err(|_| warp::reject())?;
     let mut res = db
         .query("SELECT * FROM type::thing('run', $id)")
         .bind(("id", id.clone()))

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI must never fall back to a real credential; tests run against mock/local defaults only.
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ---- Gating: the build and test suite must pass on every PR. ----
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        # Required by the tonic/prost build scripts in the gRPC surface.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace
+        run: cargo build --workspace --locked
+
+      - name: Run tests
+        run: cargo test --workspace --locked
+
+  # ---- Non-gating (informational) until the formatting/lint/advisory debt is paid down. ----
+  # These surface the ~700 rustfmt diffs and ~166 clippy warnings tracked in the roadmap as a
+  # cross-cutting cleanup; they are scheduled to become gating once that debt is cleared.
+  lint:
+    name: Lint & audit (informational)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+        continue-on-error: true
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets
+        continue-on-error: true
+
+      - name: cargo-audit
+        run: |
+          cargo install cargo-audit --locked || true
+          cargo audit
+        continue-on-error: true

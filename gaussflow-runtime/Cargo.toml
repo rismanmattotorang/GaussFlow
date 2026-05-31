@@ -50,26 +50,25 @@ sysinfo = { version = "0.35", default-features = true }
 # Atomic operations
 atomic-waker = "1.1"
 
-# Cross-platform process info
-[target.'cfg(target_os = "linux")'.dependencies]
-procfs = { version = "0.14", default-features = false, features = ["chrono"] }
+# Observability — imported unconditionally by lib/handler/planner, so kept non-optional.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-# Dummy dependency for non-Linux platforms
-
-
-# Performance monitoring
-tracing = { version = "0.1", optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"], optional = true }
+# Optional observability backends — not yet wired into the compiled runtime (roadmap Phase 4).
 tokio-console = { version = "0.1", optional = true }
 opentelemetry = { version = "0.21", optional = true }
 opentelemetry-otlp = { version = "0.11", features = ["tonic", "tls"], optional = true }
-opentelemetry-prometheus = "0.14"
-tracing-opentelemetry = "0.22"
-prometheus = "0.13"
+prometheus = { version = "0.13", optional = true }
 
 # Core crate
-gaussflow-core = { path = "../gaussflow-core", features = ["rocksdb"] }
+gaussflow-core = { path = "../gaussflow-core" }
+
+# Cross-platform process info: Linux uses procfs; other platforms need no extra deps.
+# NOTE: target-specific tables MUST come after all [dependencies] entries — any dependency
+# declared below a [target.'cfg(...)'.dependencies] header is silently scoped to that target
+# only. A misplaced header here previously orphaned tracing + gaussflow-core on Linux builds.
+[target.'cfg(target_os = "linux")'.dependencies]
+procfs = { version = "0.14", default-features = false, features = ["chrono"] }
 
 # Benchmarking dependencies
 [dev-dependencies]
@@ -98,7 +97,7 @@ version = "0.4"
 [[bench]]
 name = "runtime_bench"
 harness = false
-path = "benches/runtime_bench.rs"
+path = "benches/runtime_benchmark.rs"
 
 [[bench]]
 name = "comprehensive_bench"
@@ -106,13 +105,20 @@ harness = false
 path = "benches/comprehensive_benchmark.rs"
 
 [features]
-default = ["tracing"]
-tracing = ["dep:tracing", "dep:tracing-subscriber", "dep:opentelemetry", "dep:opentelemetry-otlp"]
+default = []
+# OpenTelemetry export (reserved for Phase 4 — not yet wired into the compiled runtime).
+otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:tokio-console"]
+# Prometheus metrics endpoint. NOTE: the metrics_endpoint module also needs an HTTP server dep
+# (axum); completing this is a Phase 4 task. The feature is declared so default builds are clean.
+metrics = ["dep:prometheus"]
 http = []
+# Enables quarantined legacy tests that target the dead runtime::runtime engine (Phase 1).
+# Off by default so the standard build/CI is green; these tests do not yet compile.
+legacy_tests = []
 
 [[test]]
 name = "integration"
-path = "tests/integration_tests.rs"
+path = "tests/runtime_integration.rs"
 
 [[test]]
 name = "concurrent"

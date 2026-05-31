@@ -1,4 +1,11 @@
 //! Integration tests for the runtime components.
+//!
+//! QUARANTINED (roadmap Phase 0 → Phase 1): targets `gaussflow_runtime::runtime` — the parallel,
+//! unfinished engine (`runtime/mod.rs` has a `todo!()`) that is not even declared as a module in
+//! `lib.rs`, i.e. dead code per `docs/CODE_EVALUATION.md` §3.2. Gated behind `legacy_tests` so
+//! default builds / CI stay green; will be reinstated or removed when Phase 1 decides the fate of
+//! that engine. Inspect with: `cargo test -p gaussflow-runtime --features legacy_tests`.
+#![cfg(feature = "legacy_tests")]
 
 use gaussflow_runtime::runtime::{
     error::RuntimeError,

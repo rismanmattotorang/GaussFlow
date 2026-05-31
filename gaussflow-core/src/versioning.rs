@@ -198,7 +198,7 @@ mod tests {
         manager.save_version(&workflow2).await.unwrap();
         
         let latest = manager
-            .get_latest_matching_version("test", ">=1.0.0 <3.0.0")
+            .get_latest_matching_version("test", ">=1.0.0, <3.0.0")
             .await
             .unwrap();
         assert_eq!(latest.version, "2.0.0");

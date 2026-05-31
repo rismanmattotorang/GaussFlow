@@ -2172,7 +2172,6 @@ dependencies = [
  "num_cpus",
  "opentelemetry 0.21.0",
  "opentelemetry-otlp",
- "opentelemetry-prometheus",
  "petgraph",
  "pprof",
  "priority-queue",
@@ -2197,7 +2196,6 @@ dependencies = [
  "tokio-test",
  "tokio-util 0.7.15",
  "tracing",
- "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
 ]

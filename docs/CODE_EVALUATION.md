@@ -86,11 +86,14 @@ consolidated to one model and one engine (see §4).
 ## 1.6 Build status (verified by compiling)
 
 The prior revision of this evaluation was static-only. This revision **attempted an actual
-build**, and the result is the most important correction to the record:
+build**, and the result was the most important correction to the record.
 
-> **`cargo build --workspace` fails.** `gaussflow-core` compiles on its own (`cargo build -p
-> gaussflow-core` → exit 0, 14 warnings). `gaussflow-runtime` **does not compile** — 18 errors,
-> exit 101 — which cascades to every crate that depends on it (CLI, web, py).
+> **✅ RESOLVED in Phase 0.** `cargo build --workspace` and `cargo test --workspace` are now
+> green and gated in CI. The diagnosis below is retained as a record of what was wrong and how it
+> was fixed (see `docs/PRODUCTION_ROADMAP.md` Phase 0). The headline finding at the time was:
+
+> **`cargo build --workspace` fails.** `gaussflow-core` compiled on its own; `gaussflow-runtime`
+> **did not compile** — 18 errors, exit 101 — cascading to every dependent crate (CLI, web, py).
 
 Two classes of blocker, both verified:
 
@@ -100,14 +103,18 @@ Two classes of blocker, both verified:
   README or docs. Installing `protobuf-compiler` clears this specific panic.
 
 **B. Real manifest/source bugs in `gaussflow-runtime`** (persist even with `protoc` installed):
-- **Invalid feature on the core dependency.** `gaussflow-runtime/Cargo.toml` declares
-  `gaussflow-core = { path = "../gaussflow-core", features = ["rocksdb"] }`, but `gaussflow-core`
-  has **no `rocksdb` feature** (its features are `http`, `gpu`, `k8s`, `bench`, `profiling`,
-  `metrics`). This breaks the dependency link → `error[E0432]: unresolved import gaussflow_core`
-  throughout the crate.
-- **Optional deps used unconditionally.** `tracing` and `tracing-subscriber` are declared
-  `optional = true`, yet `lib.rs`, `handler.rs`, and `planner.rs` `use` them without any
-  `#[cfg(feature = "tracing")]` gate → `error[E0433]: unresolved module tracing/tracing_subscriber`.
+- **Misplaced target table — the actual root cause.** A
+  `[target.'cfg(not(target_os = "linux"))'.dependencies]` header was placed *above* the
+  declarations of `tracing`, `tracing-subscriber`, the OpenTelemetry crates, **and
+  `gaussflow-core`** — so on Linux those dependencies were silently scoped to a non-Linux target
+  and never linked, producing the cascade of `error[E0432]/[E0433]: unresolved import
+  gaussflow_core / tracing / tracing_subscriber`. **Fix:** move the cross-platform deps back into
+  `[dependencies]` and keep target tables after them.
+- **Invalid feature on the core dependency.** Once relinked, `gaussflow-core = { …, features =
+  ["rocksdb"] }` was also invalid — `gaussflow-core` has no `rocksdb` feature (only `http`, `gpu`,
+  `k8s`, `bench`, `profiling`, `metrics`). **Fix:** removed the feature.
+- **Optional deps used unconditionally.** `tracing`/`tracing-subscriber` were `optional = true`
+  yet `use`d without any `#[cfg(feature)]` gate. **Fix:** made them non-optional.
 - **Reference to an undeclared feature.** `lib.rs` guards a module with
   `#[cfg(feature = "metrics")]`, but the runtime manifest declares no `metrics` feature
   (compiler note: *expected `default`, `http`, `tokio-console`, `tracing`*).
@@ -115,11 +122,11 @@ Two classes of blocker, both verified:
   `procfs` 0.14 `Status` type has no field `0` → `error[E0609]`.
 - Several `error[E0282]: type annotations needed` are downstream fallout of the above.
 
-**Implications for the rest of this report.** Findings that depend on *running* code (e.g. the
-exact runtime behavior of `execute`, the OpenAI handler, the web simulation) are assessed from
-source, not execution — because the binaries cannot currently be built or run. The README rows
-that previously read "✅ Working" for execution/LLM nodes have been corrected to
-"🟠 Present, not building." **Restoring a green `cargo build --workspace` is roadmap Phase 0,
+**Implications for the rest of this report.** With the build fixed, the binaries compile and the
+test suite runs. Findings about *deeper runtime behavior* (the exact semantics of `execute`,
+the OpenAI handler against a live API, the web simulation path) are still assessed largely from
+source pending the Phase 1 consolidation, but they are no longer blocked by a broken build.
+**Restoring a green `cargo build --workspace` was roadmap Phase 0,
 task #1.**
 
 ---

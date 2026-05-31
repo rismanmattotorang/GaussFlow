@@ -281,16 +281,17 @@ impl CacheManager {
     
     /// Remove a value from cache
     pub async fn remove(&self, key: &str) -> Result<bool> {
-        // Remove from all layers
-        {
+        // Remove from all layers. NOTE: use `pop` (not `demote`) — `demote` only moves the LRU
+        // entry to the back, leaving it in the cache, so the value would still be served.
+        let l1_removed = {
             let mut cache = self.l1_cache.write();
-            cache.demote(key);
-        }
-        
+            cache.pop(key).is_some()
+        };
+
         let l2_removed = self.l2_cache.remove(key).is_some();
         let l3_removed = self.l3_cache.remove(key).is_some();
-        
-        let removed = l2_removed || l3_removed;
+
+        let removed = l1_removed || l2_removed || l3_removed;
         
         if removed {
             debug!("Removed cache entry: {}", key);

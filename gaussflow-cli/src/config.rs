@@ -171,8 +171,9 @@ impl Default for DatabaseConfig {
             url: "http://127.0.0.1:8000".to_string(),
             namespace: "gaussflow".to_string(),
             database: "gaussflow".to_string(),
-            username: "root".to_string(),
-            password: "REDACTED".to_string(),
+            username: std::env::var("GAUSSFLOW_DB_USER").unwrap_or_else(|_| "root".to_string()),
+            // No hardcoded secret: sourced from the environment, with a local-dev fallback.
+            password: std::env::var("GAUSSFLOW_DB_PASS").unwrap_or_else(|_| "root".to_string()),
             max_connections: 10,
             connection_timeout: 30,
             query_timeout: 60,
@@ -223,7 +224,9 @@ impl Default for MetricsConfig {
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
-            jwt_secret: "REDACTED".to_string(),
+            // No hardcoded secret. Sourced from the environment; empty by default so that
+            // `Config::validate()` rejects an unconfigured secret rather than shipping a known one.
+            jwt_secret: std::env::var("GAUSSFLOW_JWT_SECRET").unwrap_or_default(),
             jwt_expiration: 3600,
             rate_limit_enabled: true,
             rate_limit_requests: 100,

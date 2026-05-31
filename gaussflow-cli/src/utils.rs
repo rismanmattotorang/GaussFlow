@@ -158,7 +158,8 @@ pub fn parse_json_input(input: &str) -> Result<Value> {
 /// Format duration for display
 pub fn format_duration(duration: std::time::Duration) -> String {
     if duration.as_secs() < 1 {
-        format!("{:.2}ms", duration.as_millis())
+        // Use a float: `{:.2}` precision is ignored for integer types like `as_millis()` (u128).
+        format!("{:.2}ms", duration.as_secs_f64() * 1000.0)
     } else if duration.as_secs() < 60 {
         format!("{:.2}s", duration.as_secs_f64())
     } else if duration.as_secs() < 3600 {

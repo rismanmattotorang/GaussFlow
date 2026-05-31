@@ -1,2 +1,7 @@
 target/
 .DS_Store
+
+# Local environment / secrets — never commit
+.env
+.env.*
+!.env.example

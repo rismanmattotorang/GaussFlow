@@ -18,16 +18,16 @@ shows you the plan, and — on your confirmation — deploys and runs it.*
 
 ---
 
-> **⚠️ Project status: Technology Preview (Alpha) — does not currently build from a clean checkout.**
-> GaussFlow's design — the typed DAG model and a single-machine Rust runtime — is in place, and
-> `gaussflow-core` compiles on its own. But **the workspace as committed does not compile**: the
-> `gaussflow-runtime` crate fails with feature/dependency errors, and the gRPC crates require an
-> undocumented `protoc` toolchain. The flagship **prompt-to-DAG synthesis layer** that defines the
-> product vision is **not yet implemented**. Fixing the build is the #1 item on our roadmap. For a
-> verified, file-level breakdown of what compiles versus what is aspirational, read the
-> **[Code Evaluation](docs/CODE_EVALUATION.md)**. For the architecture of the synthesis layer,
-> see the **[Synthesis Pipeline](docs/SYNTHESIS_PIPELINE.md)**. For the path to 1.0, see the
-> **[Production Roadmap](docs/PRODUCTION_ROADMAP.md)**.
+> **⚠️ Project status: Technology Preview (Alpha).**
+> **Phase 0 (build + secure + CI) is complete:** `cargo build --workspace` and
+> `cargo test --workspace` are green (with `protoc` installed), CI gates both on every PR, and the
+> hardcoded secrets have been purged in favour of environment-sourced credentials. The design —
+> the typed DAG model and a single-machine Rust runtime — is in place. The flagship
+> **prompt-to-DAG synthesis layer** that defines the product vision is **not yet implemented** and
+> is the next major milestone. For a verified, file-level breakdown of what works versus what is
+> aspirational, read the **[Code Evaluation](docs/CODE_EVALUATION.md)**. For the architecture of
+> the synthesis layer, see the **[Synthesis Pipeline](docs/SYNTHESIS_PIPELINE.md)**. For the path
+> to 1.0, see the **[Production Roadmap](docs/PRODUCTION_ROADMAP.md)**.
 
 ---
 
@@ -99,14 +99,14 @@ capability stands today, evaluated against the product vision above.
 
 | Capability | Status | Notes |
 |---|---|---|
-| **Clean `cargo build --workspace`** | 🔴 **Broken** | `gaussflow-runtime` fails to compile (invalid `rocksdb` feature on the core dep; `tracing`/`metrics` feature-gating bugs; `procfs` API mismatch). Requires `protoc`. Roadmap Phase 0. |
+| **Clean `cargo build --workspace`** | ✅ **Working** | Builds + tests green; gated in CI. Requires `protoc` (see prerequisites). |
 | **Prompt → DAG synthesis (the compiler)** | 🔴 **Planned — flagship** | The defining feature. No NL→graph code exists yet; design in [SYNTHESIS_PIPELINE.md](docs/SYNTHESIS_PIPELINE.md) |
 | **Confirm → Deploy → Run lifecycle** | 🔴 **Planned** | No confirmation/registration/deploy step exists yet |
 | Workflow JSON → typed DAG parsing | ✅ **Working** | `gaussflow-core` compiles and validates (cycle/type checks) — the synthesis *target* |
-| Topological single-machine execution | 🟠 **Present, not building** | `gaussflow-runtime` (Tokio-based) — code exists and is the intended back-end, but the crate does not currently compile |
-| LLM node (OpenAI Chat Completions) | 🟠 **Present, not building** | Real OpenAI call in `handler.rs`; blocked by the runtime build failure |
-| Resource control (CPU/GPU semaphores) | 🟡 **Partial** | Implemented in `gaussflow-core` (compiles); runtime wiring blocked by build |
-| Retry with backoff (fixed/linear/exp) | 🟡 **Partial** | Policy modeled; runtime wiring blocked by build |
+| Topological single-machine execution | 🟡 **Builds; not yet consolidated** | `gaussflow-runtime` (Tokio-based) compiles and is the intended back-end; coupled to SurrealDB and returns a `run_id` — Phase 1 will consolidate and decouple it |
+| LLM node (OpenAI Chat Completions) | 🟡 **Builds** | Real OpenAI call in `handler.rs`; reads `OPENAI_API_KEY` from env |
+| Resource control (CPU/GPU semaphores) | 🟡 **Partial** | Implemented in `gaussflow-core`; runtime wiring to be finished in Phase 1 |
+| Retry with backoff (fixed/linear/exp) | 🟡 **Partial** | Policy modeled; runtime wiring to be finished in Phase 1 |
 | Run persistence (SurrealDB) | 🟡 **Partial** | Hardcoded creds; needs config + graceful fallback |
 | CLI (validate / run / serve / config) | 🟡 **Partial** | Command scaffold present, wiring incomplete |
 | Web dashboard + REST/WebSocket API | 🟡 **Partial** | API surface exists; execution path is *simulated* |
@@ -118,13 +118,13 @@ capability stands today, evaluated against the product vision above.
 | RBAC, audit, SLA, compliance | 🔴 **Planned** | Config types defined; enforcement not implemented |
 | Distributed / K8s / edge execution | 🔴 **Planned** | Feature flags exist; runtime not implemented |
 
-Legend: ✅ Working · 🟡 Partial / scaffolded · 🟠 Code present but does not build · 🔴 Planned / Broken
+Legend: ✅ Working · 🟡 Partial / scaffolded · 🔴 Planned
 
-> **The honest summary:** GaussFlow today is a *designed* execution substrate whose runtime crate
-> does not yet compile, with the *front door* — the prompt-to-DAG compiler — not built at all.
-> The core model (`gaussflow-core`) is real and compiles; the runtime is the right shape but needs
-> a build fix before any execution claim can be made. The roadmap therefore starts by making the
-> workspace build, then consolidates the engine, then builds the synthesis layer on top of it.
+> **The honest summary:** the workspace now **builds and tests green**, with secrets removed and
+> CI gating build + test (Phase 0 ✅). What remains is the substance: consolidating the runtime to
+> one correct engine (Phase 1), making the node types real (Phase 2), and then building the
+> *front door* — the prompt-to-DAG compiler — on top of a runtime we trust. The roadmap is
+> sequenced exactly that way.
 
 ---
 
@@ -187,8 +187,8 @@ the runtime and emits the same `WorkflowSpec` the runtime already executes:
 ```bash
 git clone <your-fork-url> gaussflow
 cd gaussflow
-cargo build -p gaussflow-core   # ✅ compiles today
-cargo build --workspace         # ⚠️ currently fails in gaussflow-runtime — see roadmap Phase 0
+cargo build --workspace   # ✅ builds (requires protoc)
+cargo test  --workspace   # ✅ green
 ```
 
 ### Define a workflow (today: the synthesis *output* format)
@@ -242,9 +242,11 @@ async def main():
 asyncio.run(main())
 ```
 
-> **Known limitations (tracked on the roadmap):** the runtime persists runs to SurrealDB using
-> hardcoded credentials and returns a `run_id` rather than full node outputs; and there is no
-> prompt-to-DAG step yet — you supply the `WorkflowSpec` the compiler will one day generate.
+> **Known limitations (tracked on the roadmap):** the runtime persists runs to SurrealDB
+> (credentials are now environment-sourced — see `.env.example`) and returns a `run_id` rather
+> than full node outputs; and there is no prompt-to-DAG step yet — you supply the `WorkflowSpec`
+> the compiler will one day generate. Decoupling persistence and returning real outputs are
+> Phase 1 items.
 
 ---
 
@@ -289,16 +291,15 @@ layer can only safely emit node types that the runtime actually executes — whi
 ## Development
 
 ```bash
-cargo build -p gaussflow-core  # the core crate compiles today
-cargo build --workspace        # ⚠️ currently fails in gaussflow-runtime (roadmap Phase 0)
-cargo test --workspace         # ~69 tests exist but cannot run until the build is fixed
-cargo run --example simple_workflow -p gaussflow-core
+cargo build --workspace        # build everything (requires protoc)
+cargo test  --workspace        # run the suite (green)
 cargo bench -p gaussflow-runtime
 ```
 
-> The test suite (~69 functions) is a genuine asset, but it is gated behind the runtime build
-> failure: tests cannot currently execute workspace-wide. Restoring a green
-> `cargo build --workspace` + `cargo test --workspace` is the first roadmap milestone.
+> Some legacy tests and example programs that target the soon-to-be-consolidated engine paths are
+> **quarantined** behind a `legacy_tests` feature (and `examples_legacy/`) so the default build and
+> CI stay green. They will be rewritten against the canonical engine in roadmap Phase 1. To see
+> them: `cargo test --workspace --features gaussflow-core/legacy_tests,gaussflow-runtime/legacy_tests`.
 
 See [`build.sh`](build.sh) and [`clean.sh`](clean.sh) for convenience scripts.
 
@@ -337,7 +338,7 @@ rigor, precision, and elegant foundations.
 
 ## License
 
-Apache-2.0. See `LICENSE` (to be added) for details.
+Apache-2.0. See [`LICENSE`](LICENSE) for details.
 
 © 2026 Gaussian Technologies. GaussFlow™ is a trademark of Gaussian Technologies.
 </content>

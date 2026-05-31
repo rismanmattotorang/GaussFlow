@@ -474,9 +474,10 @@ mod tests {
         assert_eq!(performance.workflow_metrics.completed_workflows, 1);
         assert_eq!(performance.workflow_metrics.running_workflows, 0);
         
-        // Test metrics summary
+        // Test metrics summary. Uptime is a recent, bounded measurement — asserting `> 0` whole
+        // seconds is flaky because the test completes in well under a second.
         let summary = manager.get_metrics_summary().await;
-        assert!(summary.uptime.as_secs() > 0);
+        assert!(summary.uptime < Duration::from_secs(3600), "uptime should be a recent measurement");
         assert_eq!(summary.performance.workflow_metrics.total_workflows, 1);
     }
 

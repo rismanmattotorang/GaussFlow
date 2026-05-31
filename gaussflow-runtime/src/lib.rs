@@ -11,7 +11,7 @@ use surrealdb::opt::auth::Root;
 use surrealdb::Surreal;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use std::sync::Once;
 
@@ -68,18 +68,30 @@ pub mod handler;
 pub mod planner;
 pub mod sys;
 
-const SURREAL_URL: &str = "ws://127.0.0.1:8000/rpc";
-const DB_USER: &str = "root";
-const DB_PASS: &str = "REDACTED";
-const NS: &str = "gaussflow";
-const DB: &str = "gaussflow";
+/// Resolve SurrealDB connection settings from the environment, falling back to local-dev
+/// defaults. No credentials are hardcoded; set `GAUSSFLOW_DB_PASS` for any non-local deployment.
+/// Returns `(url, user, password, namespace, database)`.
+fn surreal_settings() -> (String, String, String, String, String) {
+    let url = std::env::var("GAUSSFLOW_SURREAL_URL")
+        .unwrap_or_else(|_| "ws://127.0.0.1:8000/rpc".to_string());
+    let user = std::env::var("GAUSSFLOW_DB_USER").unwrap_or_else(|_| "root".to_string());
+    let pass = std::env::var("GAUSSFLOW_DB_PASS").unwrap_or_else(|_| {
+        warn!("GAUSSFLOW_DB_PASS is not set; using an insecure local-dev default. \
+               Set it before deploying GaussFlow anywhere non-local.");
+        "root".to_string()
+    });
+    let ns = std::env::var("GAUSSFLOW_DB_NS").unwrap_or_else(|_| "gaussflow".to_string());
+    let db = std::env::var("GAUSSFLOW_DB_NAME").unwrap_or_else(|_| "gaussflow".to_string());
+    (url, user, pass, ns, db)
+}
 
 pub async fn execute(dag: TypeSafeDag, input: Value) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
     info!("Connecting to SurrealDB");
-    // Connect to SurrealDB
-    let db = Surreal::new::<Ws>(SURREAL_URL).await?;
-    db.signin(Root { username: DB_USER, password: DB_PASS }).await?;
-    db.use_ns(NS).use_db(DB).await?;
+    // Connect to SurrealDB using environment-sourced credentials.
+    let (surreal_url, db_user, db_pass, ns, db_name) = surreal_settings();
+    let db = Surreal::new::<Ws>(surreal_url.as_str()).await?;
+    db.signin(Root { username: db_user.as_str(), password: db_pass.as_str() }).await?;
+    db.use_ns(ns.as_str()).use_db(db_name.as_str()).await?;
 
     let run_id = Uuid::new_v4().to_string();
     db.query("CREATE run SET id = $id, status = 'running', started = time::now(), input = $input")

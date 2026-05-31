@@ -1,4 +1,10 @@
-//! Concurrent tests for GaussFlow runtime components
+//! Concurrent tests for GaussFlow runtime components.
+//!
+//! QUARANTINED (roadmap Phase 0 → Phase 1): targets `gaussflow_runtime::runtime` — the parallel,
+//! unfinished engine that is not declared as a module in `lib.rs` (dead code per
+//! `docs/CODE_EVALUATION.md` §3.2). Gated behind `legacy_tests` so default builds / CI stay
+//! green; to be revisited when Phase 1 decides the fate of that engine.
+#![cfg(feature = "legacy_tests")]
 
 use gaussflow_runtime::runtime::{
     metrics::RuntimeMetrics,
